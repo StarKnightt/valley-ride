@@ -49,9 +49,9 @@ const PAD = arg('pad', 0.012);
 
 // ------------------------------------------------------------------ parameters
 const sk0: Skel = {
-  withers: [0, 0.04], girth: [0.0, -0.64], scapPivot: [0.0, -0.06], lScap: 0.42, scap0: -58 * RAD, neckBase: [0.16, -0.14], lNeck: 0.215, lHead: 0.58,
+  withers: [-0.03, 0.07], girth: [0.0, -0.64], scapPivot: [0.0, -0.07], lScap: 0.4, scap0: -58 * RAD, neckBase: [0.16, -0.14], lNeck: 0.215, lHead: 0.58,
   poll: [-0.02, 0.06], muzzle: [0.58, -0.04],
-  back: [-0.42, -0.06], lBack: 0.29, lLoin: 0.24, croup: [-0.18, 0.07], hip: [-0.2, -0.25], buttock: [-0.42, -0.27],
+  back: [-0.4, -0.03], lBack: 0.25, lLoin: 0.2, croup: [-0.27, 0.05], hip: [-0.2, -0.41], buttock: [-0.47, -0.3],
   lHum: 0.32, lRad: 0.46, lCanF: 0.3, lPasF: 0.09, scapFollow: 0.4, lFem: 0.44, lTib: 0.5, lCanH: 0.38, lPasH: 0.1,
   hoof: [0.075, -0.05], elbowMk: [0, 0], stifleMk: [0, 0],
 };
@@ -69,18 +69,21 @@ function build(sk: Skel, g: Gait): Spec[] {
     S[S.length - 2].lo = c[0] - r; S[S.length - 2].hi = c[0] + r; S[S.length - 1].lo = c[1] - r; S[S.length - 1].hi = c[1] + r;
   };
   const skr = sk as unknown as Record<string, unknown>;
+  // (the trunk is a thoroughbred's: about 0.85 m from the withers to the lumbosacral joint, the hip joint a little
+  // behind and below it, the point of the buttock 1.3 m behind the withers; the croup marker sits over the hips,
+  // where the plate's annotation has it)
   // skeleton: lengths inside a horse's range (a 15 to 16 hand thoroughbred), marker and joint offsets within a few
   // centimetres of where they started. The elbow and stifle markers stay within 5 cm of the joint centre (the joint
   // itself is wider than that): they are joints, not points fitted to wherever the annotation happens to sit.
   const RANGE: Record<string, [number, number]> = {
-    lScap: [0.34, 0.47], lNeck: [0.19, 0.26], lHead: [0.52, 0.64], lBack: [0.22, 0.4], lLoin: [0.2, 0.3], lHum: [0.28, 0.36], lRad: [0.42, 0.5],
+    lScap: [0.34, 0.43], lNeck: [0.19, 0.26], lHead: [0.52, 0.64], lBack: [0.2, 0.29], lLoin: [0.17, 0.24], lHum: [0.28, 0.36], lRad: [0.42, 0.5],
     lCanF: [0.26, 0.34], lPasF: [0.07, 0.14], lFem: [0.34, 0.48], lTib: [0.44, 0.58], lCanH: [0.33, 0.4], lPasH: [0.07, 0.14],
   };
   for (const [k, [lo, hi]] of Object.entries(RANGE)) num(`sk.${k}`, skr, k, 0.05, lo, hi, 0);
   num('sk.scap0', skr, 'scap0', 0.2, -70 * RAD, -45 * RAD, 0);
   num('sk.scapFollow', skr, 'scapFollow', 0.2, 0.15, 0.7, 0);
   const sk0r = sk0 as unknown as Record<string, V>;
-  for (const [k, r] of [['withers', 0.05], ['girth', 0.08], ['scapPivot', 0.04], ['neckBase', 0.12], ['poll', 0.07], ['muzzle', 0.05], ['back', 0.06], ['croup', 0.08], ['hip', 0.1], ['buttock', 0.06], ['elbowMk', 0.05], ['stifleMk', 0.05]] as [string, number][]) {
+  for (const [k, r] of [['withers', 0.04], ['girth', 0.08], ['scapPivot', 0.04], ['neckBase', 0.12], ['poll', 0.07], ['muzzle', 0.05], ['back', 0.04], ['croup', 0.06], ['hip', 0.04], ['buttock', 0.03], ['elbowMk', 0.05], ['stifleMk', 0.05]] as [string, number][]) {
     const v = skr[k] as V, c = sk0r[k];
     arr(`sk.${k}`, v, 0.05, -Infinity, Infinity, 0);
     S[S.length - 2].lo = c[0] - r; S[S.length - 2].hi = c[0] + r; S[S.length - 1].lo = c[1] - r; S[S.length - 1].hi = c[1] + r;
@@ -89,7 +92,7 @@ function build(sk: Skel, g: Gait): Spec[] {
   // the gait's curves, each inside what a horse does: the trunk rides within a few centimetres of its mean height
   // (it is airborne for a tenth of a second: it cannot rise and fall far), surges little, pitches and flexes by degrees
   arr('height', g.height, 0.1); arr('sway', g.sway, 0.05, -(TRUNK_FREE ? 0.15 : arg('swaymax', 0.07)), TRUNK_FREE ? 0.15 : arg('swaymax', 0.07)); arr('pitch', g.pitch, 0.2);
-  arr('flexion', g.flexion, 0.2, -20 * RAD, 20 * RAD);
+  arr('flexion', g.flexion, 0.2, -arg('flexmax', 20) * RAD, arg('flexmax', 20) * RAD);
   arr('neck', g.neck, 0.3, 20 * RAD, 70 * RAD); arr('neckBend', g.neckBend, 0.2, -10 * RAD, 10 * RAD); arr('head', g.head, 0.3, -60 * RAD, 0);
   for (const r of ROLES) {
     const L = g.legs[r];
@@ -225,6 +228,12 @@ function residuals(sk: Skel, g: Gait, S: Spec[], x0: number[]) {
       const e = Math.abs(wrapPi(ang(sub(P[b], P[a])) - ang(sub(f.P[b], f.P[a])))) / RAD;
       r.push(e * W.seg, hinge(e - arg('segh', 19)) * W.segWorst);
     }
+    // (the runtime's samples fall a fraction of a sample off these: hold the worst cases one sample either side too)
+    for (const dk of [-1, 1]) {
+      const Q = asPlate(J[(f.k + dk + NS) % NS]).P;
+      for (const k of KP) r.push(hinge(d2(Q[k], f.P[k]) - arg('kph', 0.115)) * W.kpWorst);
+      for (const [a, b] of SEG) r.push(hinge(Math.abs(wrapPi(ang(sub(Q[b], Q[a])) - ang(sub(f.P[b], f.P[a])))) / RAD - arg('segh', 19)) * W.segWorst);
+    }
   }
   // joint limits and accelerations over the whole stride (as the test measures them, with margins)
   mark('limits+accel');
@@ -263,6 +272,16 @@ function residuals(sk: Skel, g: Gait, S: Spec[], x0: number[]) {
   { const hm = g.height.reduce((a, b) => a + b, 0) / g.height.length; for (const h of g.height) r.push(hinge(Math.abs(h - hm) - (TRUNK_FREE ? 0.25 : arg('hvar', 0.07))) * 600); }
   // (and pitches within 9 degrees of its mean attitude)
   { const pm = g.pitch.reduce((a, b) => a + b, 0) / g.pitch.length; for (const q of g.pitch) r.push(hinge(Math.abs(q - pm) - (TRUNK_FREE ? 20 : 9) * RAD) * 300); }
+  // the trunk as it actually moves over the stride (not its controls): how far the withers and croup rise and fall,
+  // how far the body pitches and surges, each held inside a total range (off unless asked for)
+  {
+    const BOB = arg('bob', 9), PITCHR = arg('pitchr', 900) * RAD, SURGE = arg('surge', 9), WT = arg('wtrunk', 300);
+    const wy = J.map((j) => j.withers[1]), cy = J.map((j) => j.croup[1]), mx = J.map((j) => (j.withers[0] + j.croup[0]) / 2);
+    const pt = J.map((j) => Math.atan2(j.withers[1] - j.croup[1], j.withers[0] - j.croup[0]));
+    const mean = (a: number[]) => a.reduce((q, v) => q + v, 0) / a.length;
+    const mw = mean(wy), mc = mean(cy), mm = mean(mx), mp = mean(pt);
+    for (let k = 0; k < NS; k += 2) r.push(hinge(Math.abs(wy[k] - mw) - BOB / 2) * WT, hinge(Math.abs(cy[k] - mc) - BOB * 0.7) * WT, hinge(Math.abs(mx[k] - mm) - SURGE / 2) * WT, hinge(Math.abs(pt[k] - mp) - PITCHR / 2) * WT * 0.5);
+  }
   // one nod, lowest near the plate's lowest: keep the poll's height (above the ground, body lengths) on the plate's
   for (const f of PF) { const j = J[f.k]; r.push(((j.poll[1] / d2(j.withers, j.croup)) - (f.P.poll[1] - f.ground)) * W.nod * 0.8); }
   // smooth curves, bones near a horse's, everything inside its bounds
@@ -464,28 +483,34 @@ function rigOf(p: Pose, skel: Skel) {
 function standing(skel: Skel): Pose {
   const leg = (fore: boolean, x: number, flex: number): LegCurves => ({
     td: 0, duty: 0.9, xTD: x, sx: new Array(7).fill(0), sy: new Array(7).fill(0.1), dead: 0.05, floor: 0.05, epsA: 0.08, epsB: 0.08,
-    flex: new Array(K.flex).fill(flex), pas: new Array(K.pas).fill((fore ? -57 : -55) * RAD), hoofPitch: new Array(K.hoof).fill(0),
+    flex: new Array(K.flex).fill(flex), pas: new Array(K.pas).fill((fore ? -64 : -60) * RAD), hoofPitch: new Array(K.hoof).fill(0),
     scapOrFem: new Array(K.scap).fill(0), breakover: 0.6, level: 0.2,
   });
+  // (standing level: the croup as high as the withers)
+  let PITCH = 0;
   const mk = (H: number, hock: number, fx: number, hx: number): Gait => ({
-    stride: 0, speed: 0, height: new Array(K.trunk).fill(H), sway: new Array(K.trunk).fill(0), pitch: new Array(K.trunk).fill(0), flexion: new Array(K.trunk).fill(0),
-    neck: new Array(K.neck).fill(50 * RAD), neckBend: new Array(K.neck).fill(-7 * RAD), head: new Array(K.neck).fill(-42 * RAD),
+    stride: 0, speed: 0, height: new Array(K.trunk).fill(H), sway: new Array(K.trunk).fill(0), pitch: new Array(K.trunk).fill(PITCH), flexion: new Array(K.trunk).fill(0),
+    neck: new Array(K.neck).fill(40 * RAD), neckBend: new Array(K.neck).fill(-3 * RAD), head: new Array(K.neck).fill(-50 * RAD),
     legs: { foreLead: leg(true, fx, 3 * RAD), foreTrail: leg(true, fx, 3 * RAD), hindLead: leg(false, hx, hock), hindTrail: leg(false, hx, hock) },
   });
   // toes under the shoulder and just behind the hip; the height that leaves the elbow its standing bend; the hock
   // flexion that then fits the hind leg
+  { const p0 = pose(skel, mk(1.45, 0.5, 0, -1), 0.1); PITCH = -Math.asin((p0.mk.withers[1] - p0.mk.croup[1] - 0.045) / Math.hypot(p0.mk.withers[0] - p0.mk.croup[0], p0.mk.withers[1] - p0.mk.croup[1])); }
   const probe = pose(skel, mk(1.45, 0.5, 0, -1), 0.1);
   const fx = probe.legs.foreLead.top[0] - 0.03, hx = probe.legs.hindLead.top[0] - 0.1;
   let lo = 1.2, hi = 1.8;
   const elbow = (H: number) => { const l = pose(skel, mk(H, 0.5, fx, hx), 0.1).legs.foreLead; return wrapPi(l.aLower - l.aUpper); };
-  for (let i = 0; i < 50; i++) { const H = (lo + hi) / 2; if (elbow(H) > 50 * RAD) lo = H; else hi = H; }
+  for (let i = 0; i < 50; i++) { const H = (lo + hi) / 2; if (elbow(H) > 36 * RAD) lo = H; else hi = H; }
   const H = (lo + hi) / 2;
   // the hind leg: the cannon upright under the hock, the stifle with its standing bend (a search over where the toe
   // stands and how far the hock is flexed)
+  const bx = pose(skel, mk(H, 0.5, fx, hx), 0.1).mk.buttock[0];   // the hock stands just ahead of the point of the buttock
   let best = { e: Infinity, hock: 0.5, x: hx };
-  for (let x = hx - 0.3; x <= hx + 0.15; x += 0.01) for (let hk = 0.1; hk <= 1.0; hk += 0.01) {
+  for (let x = hx - 0.3; x <= hx + 0.45; x += 0.01) for (let hk = 0.1; hk <= 1.2; hk += 0.01) {
     const l = pose(skel, mk(H, hk, fx, x), 0.1).legs.hindLead;
-    const e = wrapPi(l.aCannon + Math.PI / 2 - 0.06) ** 2 + ((l.reach - 0.07) / 0.1) ** 2;
+    if (l.short > 1e-4) continue;
+    // (the thigh sloping forward and down at about 60 degrees, the cannon upright: a horse standing square)
+    const e = wrapPi(l.aCannon + Math.PI / 2 - 0.04) ** 2 + ((l.mid2[0] - (bx + 0.1)) / 0.12) ** 2 + 0.8 * wrapPi(l.aUpper + 68 * RAD) ** 2;
     if (e < best.e) best = { e, hock: hk, x };
   }
   return pose(skel, mk(H, best.hock, fx, best.x), 0.1);

@@ -47,7 +47,7 @@ export function gateJointNames(): string[] {
 }
 
 interface HorseMeta {
-  lead: 'L' | 'R'; stride: number; period: number; speed: number; keysPerStride: number; triangles: number; bones: number;
+  lead: 'L' | 'R'; stride: number; period: number; speed: number; keysPerStride: number; triangles: number; hairTriangles: number; bones: number;
   /** model space at rest: x left, y up, z forward, the ground at y = 0 */
   markers: Record<string, { bone: string; at: [number, number, number] }>;
 }
@@ -285,6 +285,14 @@ export class Horse {
       const lat = p.lateral?.[n] ?? p.lateral?.[key], yaw = p.yaw?.[n] ?? p.yaw?.[key];
       if (lat !== undefined) turn(n, lat, X);
       if (yaw !== undefined) turn(n, yaw, Y);
+    }
+    // the half-way bones over the hips and shoulders turn half as far as the bone they lie on
+    for (const [n, b] of this.bones) {
+      const m = /^(femur|humerus)Half([LR])$/.exec(n);
+      if (!m) continue;
+      const c = this.bones.get(`${m[1]}${m[2]}`)!;
+      const dq = this.restQ.get(c.name)!.clone().invert().multiply(c.quaternion);
+      b.quaternion.copy(this.restQ.get(n)!).multiply(new THREE.Quaternion().slerp(dq, 0.5));
     }
     this.root.updateMatrixWorld(true);
   }

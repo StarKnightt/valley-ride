@@ -59,6 +59,8 @@ async function boot() {
   const sun = new THREE.DirectionalLight(0xffffff, 2.6);
   sun.castShadow = true;
   sun.shadow.mapSize.set(2048, 2048);
+  sun.shadow.bias = -0.0006; // (without these the horse's own shadow bands across its barrel)
+  sun.shadow.normalBias = 0.04;
   Object.assign(sun.shadow.camera, { left: -5, right: 5, top: 5, bottom: -5, near: 0.5, far: 40 });
   scene.add(sun, sun.target);
   const ground = new THREE.Mesh(new THREE.PlaneGeometry(200, 20), new THREE.MeshStandardMaterial({ color: 0xbfae8c, roughness: 1 }));

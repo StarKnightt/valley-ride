@@ -5,7 +5,8 @@ the summit at sunset. See [GAME.md](GAME.md) for the design and [NOTES.md](NOTES
 
 **Status:** Round 3 of the build plan. The valley engine (sky and time of day, terrain, river, grass, trees,
 ambient sound, riding) runs. The horse is our own model and rig, and its gallop passes the gate
-(`pnpm test:gallop`, [GALLOP-TEST.md](GALLOP-TEST.md)); the owner's check by eye in the gait lab is still to come.
+(`pnpm test:gallop`, [GALLOP-TEST.md](GALLOP-TEST.md)). A model quality pass followed; three rounds of independent
+review still list serious faults in the model (NOTES.md), so the horse is not yet accepted by eye.
 Walk, trot and canter (Round 4) do not exist yet: below gallop speed the gallop cycle plays slowly. The rider and
 the landmarks are grey placeholder boxes.
 

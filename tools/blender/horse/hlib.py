@@ -101,8 +101,8 @@ def purge():
 def tail_points(R):
     """the tail's centre line in the side view: dock, then the hair falling behind the hocks"""
     j3, croup, buttock = R.head('pelvis'), R.mk('croup'), R.mk('buttock')
-    t0 = Vector((buttock[0], croup[1] - 0.2))
-    return [t0 + Vector(o) for o in ((0.06, 0.03), (-0.07, -0.02), (-0.2, -0.14), (-0.27, -0.38), (-0.29, -0.66), (-0.3, -0.88))]
+    t0 = Vector((buttock[0], croup[1] - 0.15))
+    return [t0 + Vector(o) for o in ((0.07, 0.04), (0.0, -0.01), (-0.06, -0.11), (-0.1, -0.36), (-0.12, -0.68), (-0.13, -1.0))]
 
 
 def ear_points(R, sg):
@@ -151,3 +151,65 @@ def apply_pose(arm_ob, rot, chest=None):
         pb.rotation_mode = 'QUATERNION'
         pb.matrix_basis = M[pb.name][1]
     return M
+
+
+def chest_origin(R):
+    """the chest frame's origin (the base of the withers), side view"""
+    return R.head('chest') + Vector((0.2, 0.32))
+
+
+def neck_lines(R):
+    """the neck's crest and underline (functions of t, 0 at the withers .. 1 at the poll) and its half width"""
+    import math
+    chest0 = chest_origin(R)
+    top_w = R.mk('withers')[1] - chest0[1]
+    atlas, hd = R.head('head'), (R.tail('head') - R.head('head')).normalized()
+    hu = perp(hd)
+    top0, top1 = chest0 + Vector((0.0, top_w + 0.005)), atlas + hd * -0.03 + hu * 0.08
+    bot0, bot1 = R.head('humerus.L') + Vector((0.05, 0.03)), atlas + hd * 0.075 + hu * -0.165
+    nt, nb = perp((top1 - top0).normalized()), perp((bot1 - bot0).normalized())
+    cl = lambda t: min(1.0, max(0.0, t))
+    crest = lambda t: lerp(top0, top1, t) + nt * (0.075 * math.sin(math.pi * cl(t) ** 0.8) ** 1.1)
+    under = lambda t: lerp(bot0, bot1, t) + nb * (0.06 * math.sin(math.pi * cl(t) ** 1.3))
+    hw = lambda t: lerp(0.19, 0.07, cl(t) ** 0.7)
+    return crest, under, hw
+
+
+def neck_side(R, t, depth):
+    """half width of the neck at a depth below the crest at t (the neck's section is narrow at the crest)"""
+    import math
+    crest, under, hw = neck_lines(R)
+    half = (crest(t) - under(t)).length / 2
+    sv = max(-1.0, min(1.0, 1 - depth / max(half, 1e-6)))
+    w = hw(t) * (0.55 + 0.45 * (1 - max(0.0, sv)) ** 0.8)
+    return w * math.sqrt(max(0.0, 1 - sv * sv))
+
+
+HALF_BONES = {f'{child}Half.{sd}': (parent if '.' not in parent else None, f'{child}.{sd}', parent.replace('*', sd))
+              for sd in ('L', 'R') for child, parent in (('femur', 'pelvis'), ('humerus', 'scapula.*'))}
+
+
+def key_rot(D, k):
+    """
+    Every bone's turn from rest (side view, absolute) at key k of the designed gallop: the design's own bones, the
+    half-way bones that carry the muscle over the hips and shoulders (half the turn between a bone and its parent),
+    and what the plate does not show, on the stride's period: the tail carried out behind and streaming with a wave
+    running down it, the mane lifting off the neck and falling back, the ears laid back.
+    """
+    import math
+    K = D['keys']
+    n = K['n']
+    k %= n
+    rot = {b: K['rot'][b][k] for b in K['rot']}
+    for name, (_, child, parent) in HALF_BONES.items():
+        rot[name] = (rot[child] + rot[parent]) / 2
+    ph = 2 * math.pi * k / n
+    pel = rot['pelvis']
+    for i, (base, amp) in enumerate(((-22, 5), (-36, 11), (-30, 18), (-20, 26))):
+        rot[f'tail{i + 1}'] = pel + math.radians(base + amp * math.sin(ph - 1.15 * i - 0.6) + 0.35 * amp * math.sin(2 * ph - 0.8 * i))
+    for i in range(5):
+        nk = rot[f'neck{min(3, 1 + (i * 3) // 5)}']
+        rot[f'mane{i + 1}'] = nk + math.radians(-26 - (16 + 3 * i) * math.sin(ph - 1.3 * i + 0.4) - 10 * math.sin(2 * ph + 2.1 * i))
+    for sd in ('L', 'R'):
+        rot[f'ear.{sd}'] = rot['head'] + math.radians(-20 + 4 * math.sin(ph + (0.5 if sd == 'L' else 1.3)))
+    return rot

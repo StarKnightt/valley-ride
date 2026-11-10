@@ -15,22 +15,11 @@ from mathutils import Matrix
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)) if '__file__' in globals() else 'F:/valley-ride/tools/blender/horse')
 import importlib, hlib
 importlib.reload(hlib)
-from hlib import log, design, activate, pose_matrices, WORK
+from hlib import log, design, activate, pose_matrices, key_rot, WORK
 
 D = design()
 KEYS = D['keys']
 N = KEYS['n']
-
-
-def extra(k):
-    """tail streaming behind with a wave down its length, ears laid back: turns from rest (side view), per key"""
-    ph = 2 * math.pi * k / N
-    rot = {}
-    for i, (base, amp) in enumerate(((-34, 5), (-50, 7), (-58, 9), (-63, 11))):
-        rot[f'tail{i + 1}'] = math.radians(base + amp * math.sin(ph - 0.9 * i - 0.6))
-    for sd in ('L', 'R'):
-        rot[f'ear.{sd}'] = math.radians(-22 + 4 * math.sin(ph + (0.5 if sd == 'L' else 1.3)))
-    return rot
 
 
 def key_gallop():
@@ -57,8 +46,7 @@ def key_gallop():
     loc = []
     for k in range(N + 1):
         kk = k % N
-        rot = {b: KEYS['rot'][b][kk] for b in KEYS['rot']}
-        rot.update(extra(kk))
+        rot = key_rot(D, kk)
         M = pose_matrices(arm, rot, KEYS['chest'][kk])
         for b in bones:
             q = M[b][1].to_quaternion()
@@ -91,9 +79,13 @@ def key_gallop():
 
 def export_glb():
     arm, mesh = bpy.data.objects['horse_rig'], bpy.data.objects['horse']
-    for o in bpy.context.view_layer.objects:
-        o.select_set(False)
-    for o in (arm, mesh):
+    hair = bpy.data.objects.get('horse_hair')
+    for o in list(bpy.context.view_layer.objects):
+        try:
+            o.select_set(False)
+        except RuntimeError:
+            pass
+    for o in [arm, mesh] + ([hair] if hair else []):
         o.hide_set(False)
         o.select_set(True)
     bpy.context.view_layer.objects.active = arm

@@ -89,7 +89,8 @@ slide them along the leg to wherever the annotation sits).
 `tools/gait/design-gallop.ts` fits the rig's side-view curves to the plate and to these checks, in node, with the
 same `gallop.ts`; `tools/blender/horse/horse_anim.py` keys the result in Blender (240 keys per stride, one per test
 sample, so the interpolation between keys adds no acceleration of its own) and exports the GLB; the runtime plays
-it. The design tool's own PASS is only a forecast. The verdict is `pnpm test:gallop` on the exported GLB in the
+it. The design tool's own PASS is only a forecast (its samples fall a fraction of a sample from the runtime's: a
+worst keypoint of 0.148 there has been 0.153 here). The verdict is `pnpm test:gallop` on the exported GLB in the
 runtime, which is what this document describes.
 
 ## Definitions

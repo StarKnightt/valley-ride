@@ -24,19 +24,20 @@ def run():
     horse, arm = bpy.data.objects['horse'], bpy.data.objects['horse_rig']
     saved = dict(fps=scene.render.fps, start=scene.frame_start, end=scene.frame_end, cam=scene.camera, pose=arm.data.pose_position)
     arm.data.pose_position = 'REST'
+    hair = bpy.data.objects.get('horse_hair')
     for o in bpy.data.objects:
-        o.hide_render = o not in (horse, arm)
+        o.hide_render = o not in (horse, arm, hair)
     made = []
     def add(ob):
         scene.collection.objects.link(ob)
         made.append(ob)
         return ob
     cam = add(bpy.data.objects.new('tt_cam', bpy.data.cameras.new('tt_cam')))
-    cam.data.lens = 70
+    cam.data.lens = 60
     pivot = add(bpy.data.objects.new('tt_pivot', None))
-    pivot.location = (0, 0, 0.92)
+    pivot.location = (0, 0, 1.0)
     cam.parent = pivot
-    cam.location = (0, -8.6, 0.5)
+    cam.location = (0, -9.4, 0.45)
     cam.rotation_euler = (math.radians(86), 0, 0)
     sun = add(bpy.data.objects.new('tt_sun', bpy.data.lights.new('tt_sun', 'SUN')))
     sun.data.energy = 3.2

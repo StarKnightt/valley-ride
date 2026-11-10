@@ -139,7 +139,9 @@ def bake():
     for _ in range(2):
         grain = (grain + np.roll(grain, 1, 0) + np.roll(grain, 1, 1) + np.roll(grain, -1, 0)) / 4
     grain = (grain - grain.mean()) / (grain.std() + 1e-6)
-    shade = (0.62 + 0.38 * np.clip(ao, 0, 1)) * (1 + 0.035 * grain)
+    # muscle shading: occlusion darkens the hollows between the forms and lets their crowns stand a little lighter
+    a = np.clip(ao, 0, 1)
+    shade = (0.42 + 0.68 * a ** 1.5) * (1 + 0.012 * grain)
     def save(name, arr, colour):
         im = image(name, colour)
         full = np.ones((SIZE, SIZE, 4), dtype=np.float32)
@@ -171,6 +173,7 @@ def bake():
     nt.links.new(sep.outputs['Blue'], b.inputs['Metallic'])
     nt.links.new(tn.outputs['Color'], nm.inputs['Color'])
     nt.links.new(nm.outputs['Normal'], b.inputs['Normal'])
+    hair_material()
     high.hide_render = True
     high.hide_set(True)
     try:
@@ -178,6 +181,73 @@ def bake():
     except TypeError:
         pass
     log('textures in', TEX)
+
+
+def hair_material():
+    """the strand texture of the mane and tail cards (8 columns of strands, root at the top, alpha thinning to the
+    tips) and their material"""
+    hair = bpy.data.objects.get('horse_hair')
+    if not hair:
+        return
+    Wd, Hd, COLS = 512, 512, 8
+    rng = np.random.default_rng(3)
+    rgba = np.zeros((Hd, Wd, 4), dtype=np.float32)
+    cw = Wd // COLS
+    yy = np.linspace(0, 1, Hd, dtype=np.float32)[:, None]            # 0 root .. 1 tip
+    xx = np.arange(cw, dtype=np.float32)[None, :]
+    for c in range(COLS):
+        alpha = np.zeros((Hd, cw), dtype=np.float32)
+        tone = np.zeros((Hd, cw), dtype=np.float32)
+        for _ in range(17):
+            x0 = rng.uniform(3, cw - 3)
+            wv = rng.uniform(1.2, 2.6)
+            ln = rng.uniform(0.55, 1.0)
+            drift = rng.uniform(-5, 5)
+            sway = rng.uniform(1, 3) * np.sin(yy * rng.uniform(4, 9) + rng.uniform(0, 6))
+            cx = x0 + drift * yy + sway
+            wid = wv * np.clip(1 - (yy / ln) ** 3, 0, 1)
+            a = np.clip((wid - np.abs(xx - cx)) / 1.2 + 0.5, 0, 1) * (yy < ln) * (yy < 0.97) * (np.abs(xx - cw / 2) < cw / 2 - 2)
+            t = rng.uniform(0.6, 1.25)
+            tone = np.where(a > alpha, t, tone)
+            alpha = np.maximum(alpha, a)
+        alpha = np.maximum(alpha, np.clip(1 - yy / 0.07, 0, 1) * ((xx > 3) & (xx < cw - 3)))   # solid at the root
+        alpha[-8:, :] = 0
+        col = np.array([0.03, 0.024, 0.022], dtype=np.float32)[None, None, :] * (0.7 + 0.5 * tone[..., None]) * (1 + 0.5 * yy[..., None])
+        rgba[:, c * cw:(c + 1) * cw, :3] = col
+        rgba[:, c * cw:(c + 1) * cw, 3] = alpha
+    # (opaque colour everywhere, so mips do not bleed black into the strands' edges)
+    im = bpy.data.images.get('horse_hair')
+    if im:
+        bpy.data.images.remove(im)
+    im = bpy.data.images.new('horse_hair', Wd, Hd, alpha=True)
+    im.colorspace_settings.name = 'sRGB'
+    im.alpha_mode = 'STRAIGHT'
+    im.pixels.foreach_set(np.ascontiguousarray(rgba[::-1]).ravel())
+    im.filepath_raw = os.path.join(TEX, 'horse_hair.png')
+    im.file_format = 'PNG'
+    im.save()
+    im.pack()
+    mat = bpy.data.materials.get('horse_hair') or bpy.data.materials.new('horse_hair')
+    mat.use_nodes = True
+    nt = mat.node_tree
+    nt.nodes.clear()
+    o = nt.nodes.new('ShaderNodeOutputMaterial')
+    b = nt.nodes.new('ShaderNodeBsdfPrincipled')
+    t = nt.nodes.new('ShaderNodeTexImage')
+    t.image = im
+    nt.links.new(t.outputs['Color'], b.inputs['Base Color'])
+    nt.links.new(t.outputs['Alpha'], b.inputs['Alpha'])
+    b.inputs['Roughness'].default_value = 0.72
+    nt.links.new(b.outputs['BSDF'], o.inputs['Surface'])
+    mat.use_backface_culling = False
+    for attr, val in (('blend_method', 'CLIP'), ('surface_render_method', 'DITHERED')):
+        try:
+            setattr(mat, attr, val)
+        except (AttributeError, TypeError):
+            pass
+    hair.data.materials.clear()
+    hair.data.materials.append(mat)
+    log('hair texture', Wd, 'x', Hd)
 
 
 if globals().get('RUN', True):

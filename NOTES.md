@@ -206,5 +206,77 @@ Lessons:
 
 Name search: empty. No process left running from these runs (the open Blender window is the owner's).
 
-Next: the owner scrubs the gait lab at 0.25x beside Muybridge and says whether Round 3 passed. Nothing after it
+Next (superseded by the model quality pass below): the owner scrubs the gait lab at 0.25x beside Muybridge. Nothing after it
 starts until then.
+
+## Model quality pass before Round 4 (2026-11-10): stopped at the reviewer limit, serious issues left
+
+Asked for after Round 3 passed the numbers but not the eye. The gallop test still passes on the result
+(`pnpm test:gallop`, exit 0; no tolerance touched), but three rounds of independent review did not clear the model.
+
+What changed:
+- **Skeleton anatomy.** The fitted skeleton had the hips about 30 cm too far back and the hip joint too high in
+  the pelvis (the cause of the long back, the low croup and the squatting hind leg). The trunk is now a
+  thoroughbred's (about 0.85 m withers to lumbosacral joint, hip joint 0.4 m below the croup), and the gallop was
+  refitted on it. The standing pose is level, hind cannon upright.
+- **Trunk motion, calmer.** Tightening the trunk's limits a step at a time, each step started from the last passing
+  fit, got much further than asking for the calm version outright (which never passed):
+
+  | | withers rise and fall | croup | pitch | surge | spine flexion |
+  |---|---|---|---|---|---|
+  | Round 3 | 20 cm | 28 cm | 19 deg | 14 cm | 40 deg |
+  | now (shipped) | 12 cm | 15 cm | 13 deg | 9 cm | 32 deg |
+  | calmest tried | 10 cm | 13 cm | 11 deg | 8 cm | 30 deg |
+
+  The calmest passes the design check but fails B5 in the runtime by a hair (worst keypoint 0.153 against 0.15):
+  kept as `build/gait/u8.json`, not shipped. `tools/gait/trunk-report.ts` prints these numbers for any design.
+- **Surface.** Rebuilt for a thoroughbred's forms: withers ridge, deep girth, tucked flank, sloping croup, arched
+  neck, cheek and brow on the head, forearm and gaskin muscle, flat knees, cannon with the tendon standing off it,
+  fetlock, hock point, hooves with a coronet. The two chest bulges are gone.
+- **Mane, forelock and tail** are card strips (1,400 triangles, their own alpha-tested strand texture), on five
+  mane bones and four tail bones that carry a travelling wave through the stride.
+- **Deformation.** Half-way bones over the hips and shoulders (each turns half as far as the thigh or upper arm),
+  buttock and hamstring weighted to the pelvis so only the stifle travels, weights smoothed over the trunk.
+  45 bones. `horse_rig.py` prints the body's volume over the gallop: it stays between 89% and 98% of rest.
+- **Textures.** Bay coat with a dark topline, lighter flank and elbow, black points fading up through the knees and
+  hocks, occlusion-shaded muscle; colour 2K, normal and occlusion-roughness 1K. `horse.glb` is 2.70 MB (budget 4).
+- The gait lab's light had no shadow bias: the horse's own shadow banded across its barrel. Fixed.
+- `scripts/gallop-strip.mjs` writes `gate/gallop-strip.png`: 12 moments of the stride with no overlays.
+
+Review, three rounds (the limit), each by a fresh reviewer given six public-domain thoroughbred photographs
+(Wikimedia Commons; sources in `build/review/refs/sources.json`) and that round's turntable stills, gallop strip
+and gallop sheet (`build/review/r1..r3/`):
+- Round 1: 11 serious (hind leg construction, hyena topline, ball quarters, tube forelegs, egg chest, cone neck,
+  no muscle, slab mane, rigid tail, rump crumpling gathered, thigh thinning extended).
+- Round 2: 6 serious (neck, withers, shoulder and chest, a shell left lying on the hip, hindquarter volume in the
+  gallop, legs).
+- Round 3: 9 serious. What the last reviewer still calls serious:
+  1. the thigh is one smooth sack dropping to a low stifle, then a thin gaskin;
+  2. the hind leg stands under itself, the hock too low (level with the knee);
+  3. knees and hocks read as balls, not flat blocks and wedges;
+  4. the neck is too short, upright and thin, and does not blend into shoulder or jaw;
+  5. the front view is a narrow slab with no pectorals, and the eyes bulge;
+  6. muscle reads as inflated lumps: no plane changes or grooves between muscles;
+  7. the rump thins to a lobe when the hind legs trail back (phases 0.67 to 0.83);
+  8. the hindquarter creases and humps when gathered (phases 0.08 to 0.25);
+  9. the head and neck are frozen through the stride.
+  Borderline: withers still weak, the mane a rigid fin in the gallop, the coat flat.
+
+Where that leaves it, plainly: the horse is much closer than Round 3's (proportion, stance, hair, calmer gallop,
+half the file size), and it is not yet a horse a horseman would accept. Two of the nine come from the skeleton
+the plate fit produces (short lower hind leg from the plate's low fetlocks, so a low hock; the neck's length and
+carriage, and its stillness, follow the plate's poll and muzzle). The rest are surface and skinning, and I do not
+think lofted shells and a voxel union will get them: muscle planes, flat joints and a thigh that holds its shape
+want a hand-sculpted surface with real edge flow at the joints, and corrective shapes on the quarters.
+
+Lessons:
+- **Tighten in steps from a solution that passes.** The calm gallop was unreachable in one jump and reachable in
+  four small ones.
+- **Design margin is not runtime margin.** A 0.148 in the design was 0.153 in the runtime (the samples fall a
+  fraction of a sample apart). Leave 0.007 or do not ship it.
+- **Small landmark shells read as warts.** A point of hip or a pectoral added as its own ellipsoid stands on the
+  surface like a welt unless nearly all of it is buried.
+- **Volume as a number flagged the right place** (thigh and shoulder, about 5% each) but not the fix: moving the
+  thigh's mass onto the pelvis kept the number and made the rump a featureless ball.
+
+Name search: empty. No process left running from these runs (the open Blender window is the owner's).
