@@ -4,8 +4,9 @@ Everything that ships with Valley Ride, where it came from and under what licenc
 procedural sky, terrain, river, grass and the pine and oak trees are our own work. Nothing in the game is
 AI-generated (GAME.md, Rules).
 
-The horse, the rider, the ruins and the props are grey placeholders built in code until they are modelled in
-Blender. There is no music yet.
+The horse (`public/assets/horse/`: mesh, rig, textures and gallop) is our own work, built in Blender by the scripts
+in `tools/blender/horse/` and animated against Muybridge's plate (below). The rider, the ruins and the props are
+grey placeholders built in code until they are modelled in Blender. There is no music yet.
 
 All Poly Haven assets are CC0 1.0 (https://polyhaven.com/license), credited anyway. All freesound.org recordings
 listed here are CC0 1.0.

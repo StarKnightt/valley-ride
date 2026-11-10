@@ -8,7 +8,10 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "tour": "node scripts/valley-tour.mjs",
-    "test:gallop": "node --import tsx scripts/test-gallop.mjs"
+    "test:gallop": "node --import tsx scripts/test-gallop.mjs",
+    "test:rig": "node scripts/rig-check.mjs",
+    "design:gallop": "node --import tsx tools/gait/design-gallop.ts --kleg=16 --kswing=9 --pad=0.01 --broyden=6",
+    "build:horse": "tsx tools/build-horse.ts"
   },
   "dependencies": {
     "three": "^0.187.0"

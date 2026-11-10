@@ -3,10 +3,11 @@
 A calm horse-riding game in the browser: one valley, one day, one ride from the meadow at sunrise to the ruins on
 the summit at sunset. See [GAME.md](GAME.md) for the design and [NOTES.md](NOTES.md) for the round log.
 
-**Status:** Round 1 of the build plan. The valley engine (sky and time of day, terrain, river, grass, trees,
-ambient sound, riding) runs; the horse, rider and landmarks are grey placeholder boxes until they are modelled
-in Blender. The gallop is the first gate (GAME.md, "The gate"): its test is written and fails on the placeholder
-([GALLOP-TEST.md](GALLOP-TEST.md)).
+**Status:** Round 3 of the build plan. The valley engine (sky and time of day, terrain, river, grass, trees,
+ambient sound, riding) runs. The horse is our own model and rig, and its gallop passes the gate
+(`pnpm test:gallop`, [GALLOP-TEST.md](GALLOP-TEST.md)); the owner's check by eye in the gait lab is still to come.
+Walk, trot and canter (Round 4) do not exist yet: below gallop speed the gallop cycle plays slowly. The rider and
+the landmarks are grey placeholder boxes.
 
 ## Run
 

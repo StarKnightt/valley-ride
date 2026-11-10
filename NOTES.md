@@ -127,4 +127,84 @@ above all the overlapping legs of the suspension frames 2 and 3 and the folded l
 Name search: empty again. No process left running from these runs (the open Blender window and the Chrome
 windows are yours).
 
-Next: Round 2, the horse model and rig. It needs Blender open with the MCP server running and added to Claude Code.
+## After Round 1: the owner's decision, and the annotation re-check (2026-11-10)
+
+- The owner's decision on the two checks the plate failed: the plate is the ground truth. Check 3's limit is 0.60
+  body lengths (what the plate showed, 0.54, plus a margin). Check 8 is now "one nod per stride, timed to the plate
+  within one frame". Written into `TOL` and GALLOP-TEST.md with the reason. No other limit moved.
+- Frames 1, 2, 3 and 11 re-read from 4x and 5x zooms with a pixel grid. Round 1 had several points off the
+  silhouette there, and bones 40 to 80% too long where the legs overlap. Every point moved is in GALLOP-TEST.md.
+- **Open, for the owner:** with the hind cannons at their real length, the plate's own suspension spreads 0.72
+  body lengths (frame 2), so the annotated plate fails check 3 at 0.60 again. The limit was left at 0.60 and our
+  horse meets it (0.58), a little more gathered than the plate. Either the limit should follow the plate, or my
+  re-reading of the hind hooves in frames 2 and 3 is wrong: look at those two frames in the gait lab.
+
+## Rounds 2 and 3: the horse, its rig, and the gallop (2026-11-10)
+
+Done:
+- **The skeleton and the gallop are designed together against the plate** (`tools/gait/`): a side-view model of the
+  rig (every bone turns about the lateral axis), driven by periodic curves, with two-link IK closing each leg so a
+  planted toe is planted exactly. A Levenberg-Marquardt fit puts the curves and the bone lengths (inside a
+  thoroughbred's ranges, the horse's size pinned to the plate's) on the plate's keypoints and on the test's checks,
+  using the test's own `gallop.ts`. Result: `tools/blender/horse/gallop.design.json`.
+- **The model** (`tools/blender/horse/`, through the Blender MCP): closed shells lofted round that skeleton, fused
+  by a voxel remesh, smoothed, decimated to 13,748 triangles, unwrapped; 36 deform bones, at most 4 weights per
+  vertex; colour, normal and occlusion-roughness maps baked at 2K with Cycles on the RTX 4060 (OptiX, asserted).
+  `tools/build-horse.ts` writes `public/assets/horse/horse.glb` (meshopt, KTX2, 6.4 MB) and `horse.json`.
+- **The gallop**: keyed in Blender from the design at 240 keys per stride (one per test sample), exported, played
+  by `Horse.ts` with the clip's time as the stride phase (phase advances by ground speed / stride).
+- `Horse.ts` rewritten for our rig: bone-mounted markers for the test's joints, footfalls from the toes, stress
+  poses for the rig check. The gait lab gained a rig mode (a pose on a turntable); `pnpm test:rig` writes
+  `gate/rig-check.png`.
+- A turntable of the finished model: `tools/blender/horse/turntable.mp4` (EEVEE on the 4060, encoded with NVENC)
+  and `turntable.jpg`.
+
+Round 2's check (`pnpm test:rig`, GPU printed: nvidia lovelace, WebGPU): triangles 13,748 / 14,000, bones 36 / 60,
+rest and six stress poses (legs folded, legs extended, neck down, neck turned, rear, spine flexed) from five
+angles each. Looked at: no tearing or collapse; the quarters crease when the pelvis tucks hard.
+
+Round 3's gate, `pnpm test:gallop` on the exported GLB in the runtime (no page errors, exit 0):
+
+```
+PASS A1  order trailing hind > leading hind > trailing fore > leading fore; gaps 20.0% 12.9% 23.8% 43.3%
+PASS A2  suspension 22.1%, starting at the leading fore's lift-off          (15..30%)
+PASS A3  widest spread in suspension 0.58 body lengths                      (<= 0.60)
+PASS A4  duty 26.3% / 20.0% / 26.3% / 21.3%                                 (18..35%)
+PASS A5  slide 0.0 cm at 0.25x (7 stances) and at 1x (11 stances)           (<= 1 cm)
+PASS A6  lowest hoof 0.0 cm, every hoof plants                              (>= -1 cm)
+PASS A7  spine range 39.8 deg; 41.8 in suspension vs 73.5 at hind push-off  (>= 8 deg, flexed in suspension)
+PASS A8  1 nod, poll lowest 0.65 plate frames from the plate's lowest       (<= 1 frame)
+PASS A9  all joints inside their limits
+PASS A10 no acceleration spikes, seam clean
+PASS B3  contact pattern matches in all 11 frames
+PASS B4  segment angles mean 11.0 deg, worst 23.4 (frame 10, trailing hind gaskin)        (<= 12 / 25)
+PASS B5  keypoints mean 0.073, worst 0.142 body lengths (frame 4, trailing hind fetlock)  (<= 0.08 / 0.15)
+```
+
+What a pass does not say (for the owner's check by eye, which is still the gate):
+- **The trunk moves more than a real horse's.** To sit on the plate's keypoints the fit lets the withers rise and
+  fall 20 cm, the croup 28 cm, the body pitch through 19 degrees and surge 14 cm fore and aft, with the spine
+  flexing through 40 degrees. A real gallop is about half of each. A fit held to calmer trunk motion reached
+  keypoints of 0.076 mean / 0.158 worst: just outside B5. I did not find a version that both passes and is calm.
+- **The margins are thin**: B5 worst 0.142 of 0.15, B4 mean 11.0 of 12, A3 0.58 of 0.60.
+- **The stride is 5.66 m** (5.1 body lengths, as the plate's keypoints ask), so at the game's 10 m/s a stride takes
+  0.57 s. Sallie Gardner did her stride at about 17 m/s. It reads as a long, slow gallop.
+- Below gallop speed the same cycle plays slowly (hooves still planted). Walk, trot and canter are Round 4.
+- The model is plain: lumpy quarters, a solid mane and tail, hocks too bent at rest, no LODs yet, 6.4 MB of
+  textures.
+
+Lessons:
+- **Check the solver before blaming the problem.** A stop rule that quit on the first small step, and residuals
+  that were roots of summed squares (kinked at zero), each stalled the fit for many runs that looked like "the
+  constraints are too tight".
+- **Pin the scale.** With the horse's size free, bone "ranges" meant nothing and the fit grew a giant.
+- **A fit that passes the numbers is not yet a motion.** The first passing fit bobbed the body 48 cm. Bound what
+  a body can physically do before trusting the verdict.
+- **Hide construction geometry from a bake.** The shells the surface was remeshed from sat just inside it and
+  shadowed the occlusion bake to black.
+- The Blender MCP addon in the open session is behind the server (protocol 13 vs 15); everything used here worked.
+
+Name search: empty. No process left running from these runs (the open Blender window is the owner's).
+
+Next: the owner scrubs the gait lab at 0.25x beside Muybridge and says whether Round 3 passed. Nothing after it
+starts until then.

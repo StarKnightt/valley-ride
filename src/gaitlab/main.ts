@@ -8,7 +8,8 @@
  */
 import * as THREE from 'three/webgpu';
 import { Engine } from '../valley/core/Engine';
-import { GAIT, Horse } from '../valley/ride/Horse';
+import { initAssets } from '../valley/core/Assets';
+import { GAIT, Horse, STRESS_POSES } from '../valley/ride/Horse';
 import {
   analyse, legOf, normalise, oursAsPlate, plateNormalised, ROLES,
   type Plate, type Recording, type Role, type Sample, type V3,
@@ -66,9 +67,11 @@ async function boot() {
   ground.receiveShadow = true;
   scene.add(ground, backdrop());
 
+  initAssets(engine.renderer);
   const horse = new Horse();
   await horse.load();
   scene.add(horse.root);
+  horse.rider.visible = false; // (the plate is compared with the horse; the placeholder rider would only hide its back)
   const plate: Plate = await (await fetch('refs/muybridge/keypoints.json')).json();
   const card = new Image();
   card.src = 'refs/muybridge/card.jpg';
@@ -87,9 +90,12 @@ async function boot() {
   };
   frameView();
   addEventListener('resize', frameView);
+  /** rig check: a stress pose held on a turntable (the camera circles the horse) */
+  let stress = '', turn = -Math.PI / 2, turning = true;
   const follow = () => {
     const p = horse.root.position;
-    camera.position.set(p.x - D, eyeY, p.z);
+    if (stress) camera.position.set(p.x + Math.cos(turn) * D, eyeY + 0.5, p.z + Math.sin(turn) * D);
+    else camera.position.set(p.x - D, eyeY, p.z);
     camera.lookAt(p.x, eyeY, p.z);
     sun.position.set(p.x - 6, 12, p.z - 4);
     sun.target.position.copy(p);
@@ -263,8 +269,18 @@ async function boot() {
     if (e.key === 'ArrowRight') { playing = false; show(k + 1); }
     if (e.key === 'ArrowLeft') { playing = false; show(k - 1); }
   });
+  const stressSel = $('stress') as HTMLSelectElement;
+  for (const [id, p] of Object.entries(STRESS_POSES)) { const o = document.createElement('option'); o.value = id; o.textContent = p.label; stressSel.appendChild(o); }
+  const setStress = (id: string) => {
+    stress = id;
+    playing = false; $('play').textContent = 'Play';
+    document.body.classList.toggle('rig', !!id);
+    if (id) { horse.setStressPose(id); svg.innerHTML = ''; turn = -Math.PI / 2; } else { horse.setStressPose(null); show(k); }
+  };
+  stressSel.onchange = () => setStress(stressSel.value);
+  engine.addUpdater((wallDt) => { if (stress && turning) turn += wallDt * 0.7; });
   engine.addUpdater((wallDt) => {
-    if (!playing) return;
+    if (!playing || stress) return;
     kf += (wallDt * Number(($('rate') as HTMLSelectElement).value)) / dt;
     show(Math.floor(kf));
   });
@@ -281,10 +297,23 @@ async function boot() {
   engine.manual = false;
   engine.start();
   show(result.align.index[0]);
-  status(`${gpu} · ${engine.backendName} · placeholder horse`);
+  status(`${gpu} · ${engine.backendName} · ${horse.meta.triangles} triangles, ${horse.meta.bones} bones`);
 
   w.__gaitlab = {
     ready: true, engine, horse, rec, result, plate,
+    /** the harness (rig check): hold a stress pose seen from an angle (radians round the horse, -PI/2 = its right side) */
+    async rig(id: string, angle: number) {
+      document.body.classList.add('capture');
+      centred = true;
+      frameView();
+      engine.manual = true;
+      turning = false;
+      setStress(id);
+      turn = angle;
+      engine.stepOnce(0);
+      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+      return { poses: Object.keys(STRESS_POSES), triangles: horse.meta.triangles, bones: horse.meta.bones };
+    },
     /** the harness: hold the loop, show sample i, return the screen joints (ours and the plate's on ours) */
     async capture(i: number, fi: number) {
       document.body.classList.add('capture');
