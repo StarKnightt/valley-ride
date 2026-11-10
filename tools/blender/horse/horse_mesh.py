@@ -308,11 +308,16 @@ def build_parts():
 
 
 # ----------------------------------------------------------------------------- the union
-COAT = (0.19, 0.075, 0.03)       # bay
-COAT_LIGHT = (0.3, 0.14, 0.06)   # flank, elbow, stifle, muzzle edge: the lighter hair of a bay
-POINTS = (0.022, 0.018, 0.017)   # black points: lower legs, muzzle, ear rims
-HOOF = (0.03, 0.027, 0.025)
+# (linear). A bay is a deep red-brown: in sRGB about (97, 52, 29) through the body, the red well clear of the green.
+# Not the orange-tan (120, 77, 48) this was, nor (115, 57, 31), which in the valley's sun read as a chestnut. The
+# coat is short hair, matte, with a low sheen only at grazing angles.
+COAT = (0.12, 0.034, 0.012)      # bay
+COAT_LIGHT = (0.18, 0.056, 0.02)   # flank, elbow, stifle, muzzle edge: the lighter hair of a bay
+COAT_DARK = (0.05, 0.015, 0.006)   # the topline
+POINTS = (0.016, 0.013, 0.012)   # black points: lower legs, muzzle, ear rims
+HOOF = (0.024, 0.021, 0.019)
 EYE = (0.008, 0.006, 0.006)
+ROUGH_COAT, ROUGH_POINTS, ROUGH_HOOF = 0.84, 0.78, 0.6
 
 
 def build_high(voxel=0.006):
@@ -348,6 +353,19 @@ def build_high(voxel=0.006):
             v.co.z = 0.0
     bm.to_mesh(high.data)
     bm.free()
+    paint(high, parts)
+    log('high:', len(high.data.vertices), 'verts', len(high.data.polygons), 'faces')
+    return high
+
+
+def paint(high=None, parts=None):
+    """the coat's colour and roughness attributes on horse_high (re-runnable on its own: paint())"""
+    high = high or bpy.data.objects['horse_high']
+    parts = parts or list(bpy.data.collections['horse_parts'].objects)
+    for a in list(high.data.color_attributes):
+        high.data.color_attributes.remove(a)
+    if high.data.attributes.get('rough'):
+        high.data.attributes.remove(high.data.attributes['rough'])
     # colour: a bay. Black points below the knees and hocks and on the muzzle and ear rims, a darker topline, lighter
     # hair in the flanks, behind the elbows and round the muzzle's edge; the eyes dark and wet; the hooves horn
     trees = {}
@@ -373,22 +391,24 @@ def build_high(voxel=0.006):
     topz = R.mk('withers')[1]
     for i, v in enumerate(high.data.vertices):
         p = v.co
-        c, r = COAT, 0.58
-        c = mix(c, (0.1, 0.038, 0.017), sm(p.z, topz - 0.3, topz + 0.02) * 0.75 * sm(-abs(p.x), -0.24, -0.04))   # topline
-        c = mix(c, COAT_LIGHT, (1 - sm((V((abs(p.x), p.y, p.z)) - V((abs(flank.x) + 0.25, flank.y, flank.z))).length, 0.1, 0.42)) * 0.5)
-        c = mix(c, COAT_LIGHT, (1 - sm((V((abs(p.x), p.y, p.z)) - V((0.2, elbow.y + 0.12, elbow.z + 0.05))).length, 0.05, 0.25)) * 0.4)
-        c = mix(c, COAT_LIGHT, sm(-p.z, -(R.mk('girth')[1] + 0.12), -(R.mk('girth')[1] - 0.02)) * 0.35 * sm(p.z, kneeF + 0.25, kneeF + 0.4))
+        c, r = COAT, ROUGH_COAT
+        c = mix(c, COAT_DARK, sm(p.z, topz - 0.3, topz + 0.02) * 0.7 * sm(-abs(p.x), -0.24, -0.04))   # topline
+        c = mix(c, COAT_LIGHT, (1 - sm((V((abs(p.x), p.y, p.z)) - V((abs(flank.x) + 0.25, flank.y, flank.z))).length, 0.1, 0.42)) * 0.35)
+        c = mix(c, COAT_LIGHT, (1 - sm((V((abs(p.x), p.y, p.z)) - V((0.2, elbow.y + 0.12, elbow.z + 0.05))).length, 0.05, 0.25)) * 0.3)
+        c = mix(c, COAT_LIGHT, sm(-p.z, -(R.mk('girth')[1] + 0.12), -(R.mk('girth')[1] - 0.02)) * 0.25 * sm(p.z, kneeF + 0.25, kneeF + 0.4))
         legz = kneeF if p.y < 0 else hock
-        # (the black comes in gradually and unevenly up the leg, higher at the back and inside)
-        wob = 0.05 * math.sin(p.x * 31 + p.y * 17) + 0.04 * math.sin(p.y * 43 + p.z * 9)
-        c = mix(c, POINTS, 1 - sm(p.z + wob, legz - 0.2, legz + 0.6) ** 0.65)
+        # black from the knees and hocks down, coming in unevenly a hand above them (higher at the back and inside)
+        wob = 0.035 * math.sin(p.x * 31 + p.y * 17) + 0.03 * math.sin(p.y * 43 + p.z * 9)
+        k = 1 - sm(p.z + wob, legz + 0.02, legz + 0.26)
+        c = mix(c, POINTS, k)
+        r = r + (ROUGH_POINTS - r) * k
         dm = (p - muzzle).length
         c = mix(c, COAT_LIGHT, (1 - sm(dm, 0.12, 0.26)) * 0.35)
         c = mix(c, POINTS, (1 - sm(dm, 0.06, 0.2)) * 0.92)
         for e in ear_tips:
             c = mix(c, POINTS, (1 - sm((p - e).length, 0.02, 0.09)) * 0.8)
         if near('hoof', p, 0.007) and p.z < 0.09:
-            c, r = mix(HOOF, (0.06, 0.052, 0.047), 0.5 * (1 + math.sin(p.z * 420)) * 0.3), 0.38
+            c, r = mix(HOOF, (0.045, 0.04, 0.036), 0.5 * (1 + math.sin(p.z * 420)) * 0.3), ROUGH_HOOF
         if near('eye', p, 0.004):
             c, r = EYE, 0.1
         elif near('dock', p, 0.006):
@@ -397,8 +417,7 @@ def build_high(voxel=0.006):
         rough.data[i].value = r
     for _, b in sum(trees.values(), []):
         b.free()
-    log('high:', len(high.data.vertices), 'verts', len(high.data.polygons), 'faces')
-    return high
+    log('painted', len(high.data.vertices), 'verts')
 
 
 # ----------------------------------------------------------------------------- the game mesh

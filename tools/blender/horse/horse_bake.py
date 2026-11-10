@@ -111,6 +111,12 @@ def bake():
     pos = arm.data.pose_position if arm else None
     if arm:
         arm.data.pose_position = 'REST'
+    # the bake is of the rest shape: any shape key (the hindquarters' correctives) off for it
+    keys = low.data.shape_keys
+    held = {k.name: k.value for k in keys.key_blocks} if keys else {}
+    for k in (keys.key_blocks if keys else []):
+        if k != keys.reference_key:
+            k.value = 0.0
     out = {}
     def run(name, colour, kind, mat_high=None, **kw):
         im = image(name, colour)
@@ -132,6 +138,9 @@ def bake():
     nim = run('bake_n', False, 'NORMAL', normal_space='TANGENT')
     if arm:
         arm.data.pose_position = pos
+    for k in (keys.key_blocks if keys else []):
+        if k != keys.reference_key:
+            k.value = held[k.name]
     # compose: colour with a little occlusion and a fine grain along the body; occlusion / roughness / metal
     col, ao, rough = out['bake_col'][..., :3], out['bake_ao'][..., 0], out['bake_rough'][..., 0]
     rng = np.random.default_rng(7)
@@ -237,7 +246,7 @@ def hair_material():
     t.image = im
     nt.links.new(t.outputs['Color'], b.inputs['Base Color'])
     nt.links.new(t.outputs['Alpha'], b.inputs['Alpha'])
-    b.inputs['Roughness'].default_value = 0.72
+    b.inputs['Roughness'].default_value = 0.8
     nt.links.new(b.outputs['BSDF'], o.inputs['Surface'])
     mat.use_backface_culling = False
     for attr, val in (('blend_method', 'CLIP'), ('surface_render_method', 'DITHERED')):

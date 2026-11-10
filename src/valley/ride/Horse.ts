@@ -48,9 +48,26 @@ export function gateJointNames(): string[] {
 
 interface HorseMeta {
   lead: 'L' | 'R'; stride: number; period: number; speed: number; keysPerStride: number; triangles: number; hairTriangles: number; bones: number;
+  /** the hindquarters' corrective shapes: morph target name -> weight at each gallop key (stride phase k / n) */
+  correctives?: Record<string, number[]>;
   /** model space at rest: x left, y up, z forward, the ground at y = 0 */
   markers: Record<string, { bone: string; at: [number, number, number] }>;
 }
+
+/**
+ * The mane and tail's own motion on top of the clip: each hair bone's tip is a damped spring chasing where the clip
+ * puts it, in the horse's frame, so the gallop's bounce and pitch swing the hair a beat late and settle; the hair
+ * streams back with speed and swings out on a turn. Each bone turns at most maxDeg off the clip's pose, and a child
+ * follows its parent's turn before it is solved itself (chains are listed root first).
+ */
+// (the springs' own frequency must sit well above the stride's, about 11 rad/s at the gallop: a tail tuned near it
+// resonates and whips 70+ degrees off the clip; at 20 rad/s it still lags 30 degrees behind the clip's fast swings and
+// flicks the tip forward under the body. ~30 rad/s, well damped: a lag of about ten degrees, a beat late, settling.)
+const HAIR = {
+  tail: { bones: ['tail1', 'tail2', 'tail3', 'tail4'], k: 900, zeta: 0.6, stream: 0.5, lift: 0.2, maxDeg: 42, swing: 0.05 },
+  mane: { bones: ['mane1', 'mane2', 'mane3', 'mane4', 'mane5'], k: 1000, zeta: 0.6, stream: 0.4, lift: 0.0, maxDeg: 34, swing: 0.035 },
+};
+interface HairBone { bone: THREE.Bone; tail: THREE.Vector3; p: THREE.Vector3; v: THREE.Vector3; cfg: (typeof HAIR)['tail']; ready: boolean }
 
 /** stress poses for the rig check (gait lab): each bone's turn in degrees on top of its parent's, about the lateral
  * axis (+ = clockwise seen from the horse's right side: nose down, a leg's lower end back) or the vertical */
@@ -122,6 +139,11 @@ export class Horse {
   meta!: HorseMeta;
   private v = new THREE.Vector3();
   private q = new THREE.Quaternion();
+  /** corrective morphs: the meshes' influence arrays and, per target, its slot and per-key weights */
+  private morphs: { influences: number[]; slot: number; table: number[] }[] = [];
+  private hair: HairBone[] = [];
+  /** the hair's dynamics off (the gait lab's still captures, the stress poses) */
+  hairStill = false;
 
   async load() {
     const [gltf, meta] = await Promise.all([loadGLTF('assets/horse/horse.glb'), fetch('./assets/horse/horse.json').then((r) => r.json() as Promise<HorseMeta>)]);
@@ -191,6 +213,30 @@ export class Horse {
     this.gallop = this.mixer.clipAction(clip);
     this.gallop.setLoop(THREE.LoopRepeat, Infinity);
     this.gallop.play();
+    // the corrective shapes of the hindquarters, weighted by the stride phase
+    model.traverse((o) => {
+      const m = o as THREE.SkinnedMesh;
+      if (!m.isMesh || !m.morphTargetDictionary || !m.morphTargetInfluences) return;
+      for (const [name, table] of Object.entries(meta.correctives ?? {})) {
+        const slot = m.morphTargetDictionary[name];
+        if (slot !== undefined) this.morphs.push({ influences: m.morphTargetInfluences, slot, table });
+      }
+    });
+    if (meta.correctives && this.morphs.length !== Object.keys(meta.correctives).length) throw new Error('horse.glb is missing a corrective morph target');
+    // the hair springs: a bone's tail in its own frame is its child's position (bones point along their own +y; the
+    // last bone of a chain takes its parent's length)
+    for (const cfg of Object.values(HAIR)) {
+      let len = 0.22;
+      for (const name of cfg.bones) {
+        const b = bone(name);
+        const child = b.children.find((c) => (c as THREE.Bone).isBone) as THREE.Bone | undefined;
+        if (child) {
+          len = child.position.length();
+          if (child.position.y / len < 0.98) throw new Error(`hair bone ${name} does not point along +y (its child is at ${child.position.toArray()})`);
+        }
+        this.hair.push({ bone: b, tail: new THREE.Vector3(0, len, 0), p: new THREE.Vector3(), v: new THREE.Vector3(), cfg, ready: false });
+      }
+    }
     this.halfLen = (mz[2] - meta.markers.buttock.at[2]) / 2 - 0.25;
     this.halfWidth = 0.3;
     this.pose(0, 0);
@@ -203,6 +249,62 @@ export class Horse {
     this.gallop.setEffectiveWeight(w);
     this.mixer.update(0);
     if (this.headNod && this.head) this.head.quaternion.multiply(this.q.setFromAxisAngle(this.v.set(1, 0, 0), this.headNod));
+    for (const m of this.morphs) {
+      const n = m.table.length, x = wrap(phase) * n, i = Math.floor(x) % n, f = x - Math.floor(x);
+      m.influences[m.slot] = (m.table[i] + (m.table[(i + 1) % n] - m.table[i]) * f) * w;
+    }
+  }
+
+  /**
+   * The mane and tail springs (HAIR), after the clip has posed the rig. In the horse's own frame (root): the clip's
+   * motion of the hair's roots (the gallop's bounce and pitch) drives them; speed streams them back, a turn swings
+   * them out.
+   */
+  private hairStep(dt: number) {
+    if (!this.hair.length) return;
+    if (this.hairStill || dt <= 0) { for (const h of this.hair) h.ready = false; return; }
+    const sp = Math.min(1, this.speed / GAIT.gallop);
+    const rootInv = this.root.matrixWorld.clone().invert();
+    const head = new THREE.Vector3(), want = new THREE.Vector3(), a = new THREE.Vector3(), b = new THREE.Vector3();
+    const pq = new THREE.Quaternion(), bq = new THREE.Quaternion(), turn = new THREE.Quaternion();
+    const steps = Math.max(1, Math.ceil(dt / (1 / 120)));
+    const h = Math.min(dt, 0.1) / steps;
+    for (const hb of this.hair) {
+      const { bone, cfg } = hb;
+      bone.updateWorldMatrix(true, false);
+      // where the clip puts the bone's tail, and its root, in the horse's frame
+      head.setFromMatrixPosition(bone.matrixWorld).applyMatrix4(rootInv);
+      want.copy(hb.tail).applyMatrix4(bone.matrixWorld).applyMatrix4(rootInv);
+      const len = hb.tail.length();
+      // speed streams the hair back (and lifts the tail); a turn swings it to the outside (+x is the horse's left)
+      want.z -= cfg.stream * sp * len;
+      want.y += cfg.lift * sp * len;
+      want.x -= cfg.swing * this.turnRate * this.speed;
+      if (!hb.ready) { hb.p.copy(want); hb.v.set(0, 0, 0); hb.ready = true; }
+      const c = 2 * cfg.zeta * Math.sqrt(cfg.k);
+      for (let s = 0; s < steps; s++) {
+        a.copy(want).sub(hb.p).multiplyScalar(cfg.k).addScaledVector(hb.v, -c);
+        hb.v.addScaledVector(a, h);
+        hb.p.addScaledVector(hb.v, h);
+        // (a hair is as long as it is)
+        b.copy(hb.p).sub(head).setLength(len);
+        hb.p.copy(head).add(b);
+      }
+      // turn the bone from the clip's direction toward the spring's, at most maxDeg
+      a.copy(want).sub(head).normalize();
+      b.copy(hb.p).sub(head).normalize();
+      turn.setFromUnitVectors(a, b);
+      const ang = 2 * Math.acos(Math.min(1, Math.abs(turn.w)));
+      const max = THREE.MathUtils.degToRad(cfg.maxDeg);
+      if (ang > max) turn.slerp(pq.identity(), 1 - max / ang);
+      // (the turn is in the horse's frame: carry it into the bone's parent)
+      this.root.getWorldQuaternion(pq);
+      turn.premultiply(pq).multiply(pq.clone().invert());       // root frame -> world
+      bone.parent!.getWorldQuaternion(pq);
+      bone.getWorldQuaternion(bq);
+      bone.quaternion.copy(pq.invert().multiply(turn).multiply(bq));
+      bone.updateMatrixWorld(true);
+    }
   }
 
   /** advance the gait by dt at the current speed; returns the footfalls that landed this frame */
@@ -219,6 +321,8 @@ export class Horse {
     this.body.position.y = this.lift;
     this.body.rotation.set(this.pitch + this.jumpPitch, 0, this.roll, 'YXZ');
     this.pose(this.phase, move);
+    this.root.updateMatrixWorld(true);
+    this.hairStep(dt);
     // footfalls: a toe coming down onto the ground (in the horse's own frame: the terrain's tilt is the body's)
     this.body.updateMatrixWorld(true);
     for (const leg of LEGS) {
@@ -242,6 +346,7 @@ export class Horse {
     for (const leg of LEGS) this.wasDown[leg] = true;
     this.pitch = this.roll = this.lift = this.jumpPitch = this.headNod = 0;
     this.air = false;
+    for (const h of this.hair) h.ready = false;
     this.body.position.set(0, 0, 0);
     this.body.rotation.set(0, 0, 0);
     this.pose(0, THREE.MathUtils.smoothstep(this.speed, 0.05, 1.0));
@@ -260,6 +365,8 @@ export class Horse {
     this.stress = name;
     this.gallop.setEffectiveWeight(0);
     this.mixer.update(0);
+    for (const m of this.morphs) m.influences[m.slot] = 0;
+    for (const h of this.hair) h.ready = false;
     for (const [n, b] of this.bones) { b.quaternion.copy(this.restQ.get(n)!); b.position.copy(this.restP.get(n)!); }
     this.body.position.set(0, 0, 0);
     this.body.rotation.set(0, 0, 0);

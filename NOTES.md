@@ -280,3 +280,30 @@ Lessons:
   thigh's mass onto the pelvis kept the number and made the rump a featureless ball.
 
 Name search: empty. No process left running from these runs (the open Blender window is the owner's).
+
+## Game-distance polish (2026-11-10): coat, hindquarters, hair
+
+Kept the horse and its gallop; polished what shows from the saddle camera. `pnpm test:gallop` passes with the same
+margins as before (A3 0.59, B4 mean 11.0 / worst 21.9, B5 mean 0.072 / worst 0.143), no tolerance touched.
+
+- **Coat.** Was an orange-tan (sRGB about 120, 77, 48) with a sheen along the back (roughness 0.58). Now a deep
+  red-brown bay (about 97, 52, 29), black from the knees and hocks down, dark hooves, roughness 0.84 (points 0.78,
+  hooves 0.6, hair cards 0.8). A first try at (115, 57, 31) read as a chestnut in the valley's sun.
+  `horse_mesh.paint()` repaints the high mesh on its own.
+- **Hindquarters.** With the thigh flexed under the body, skinning swelled the back of the thigh into a ball. Two
+  corrective shape keys (`gatherL`, `gatherR`, `tools/blender/horse/horse_correct.py`) pull the skin behind the line
+  from the point of buttock to the back of the hock most of the way back to it, smoothed over the surface. The volume
+  taken off goes back into the thigh's outer face, so body volume is unchanged (89.3% of rest at the most gathered
+  frame, same as without). Weights per gallop key are in `correctives.json` -> `horse.json`, set from the stride
+  phase in `Horse.ts`. The clip and its joints are untouched.
+- **Mane and tail.** Spring dynamics on the hair bones in `Horse.ts` (HAIR): the gallop's bounce swings them a beat
+  late, speed streams them back, turns swing them out.
+- Checked by riding: `scripts/ride-look.mjs` (forest shade, meadow noon, sunset; three-quarter back and side, at a
+  walk) and `scripts/ride-look-pair.mjs` (before/after crops). `build/ride-look/compare.png`.
+
+Lessons:
+- **A new shape key comes in at value 1 in this Blender.** Left on, the next bake baked the corrected shape in the
+  rest pose against the uncorrected high mesh: black patches on the thighs. The bake now mutes shape keys.
+- **Hair springs must sit well above the stride frequency** (about 11 rad/s at the gallop). At 8 rad/s the tail
+  resonated and whipped 76 degrees off the clip; at 20 rad/s it still flicked forward. Now about 30 rad/s, damped 0.6.
+- **Delta-mush (Corrective Smooth) does not fix a skinning bulge.** It restores local detail; the ball is the shape.

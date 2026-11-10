@@ -6,7 +6,10 @@ time is the stride phase; frame N repeats frame 0, so it loops. N = 240 keys per
 240 times, and with a key per sample the linear interpolation between keys adds no acceleration of its own.
 The tail and ears, which the plate does not show, get a small motion of their own on the same period.
 
-Export: build/blender/horse/horse.raw.glb (mesh, skin, textures, the gallop clip). tools/build-horse.ts turns it
+Then horse_correct.py measures the hindquarters' corrective shape keys on the keyed gallop (exported as morph targets,
+weighted at runtime from the stride phase: correctives.json).
+
+Export: build/blender/horse/horse.raw.glb (mesh, skin, shape keys, textures, the gallop clip). tools/build-horse.ts turns it
 into public/assets/horse/horse.glb (meshopt, KTX2).
 """
 import bpy, math, sys, os
@@ -97,7 +100,8 @@ def export_glb():
         export_frame_range=True, export_frame_step=1, export_optimize_animation_size=False, export_anim_single_armature=True,
         export_def_bones=False, export_influence_nb=4, export_all_influences=False, export_tangents=True, export_normals=True,
         export_texcoords=True, export_materials='EXPORT', export_image_format='AUTO', export_cameras=False, export_lights=False,
-        export_morph=False, export_rest_position_armature=True, export_extras=False, export_reset_pose_bones=True,
+        export_morph=True, export_morph_normal=True, export_morph_tangent=False, export_morph_animation=False,
+        export_rest_position_armature=True, export_extras=False, export_reset_pose_bones=True,
     )
     props = {p.identifier for p in bpy.ops.export_scene.gltf.get_rna_type().properties}
     dropped = [k for k in want if k not in props]
@@ -109,4 +113,8 @@ def export_glb():
 
 if globals().get('RUN', True):
     key_gallop()
+    # the hindquarters' corrective shapes are measured on the keyed gallop (horse_correct.py)
+    import horse_correct
+    importlib.reload(horse_correct)
+    horse_correct.build()
     export_glb()
