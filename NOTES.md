@@ -78,5 +78,53 @@ loop, jumps the logs and passes the placeholder ruins; the frame rate on the 406
 One warning: the autopilot skipped waypoint 15 near the falls (it recovered and carried on).
 Still to do by hand: `pnpm dev` and ride it yourself.
 
-Next: Round 1, the gallop test (needs nothing new). Round 2 needs Blender open with the MCP server running and
-added to Claude Code.
+## Round 1: the gallop test, failing (2026-11-10)
+
+Done:
+- Sourced the plate: Muybridge's Sallie Gardner card, the Library of Congress master TIFF (LC-DIG-ppmsca-06607),
+  kept as `refs/muybridge/card.jpg` at full resolution with `SOURCE.md`. Read the caption off the card: 27 in and
+  about 1/25 s between frames.
+- Annotated frames 1 to 11 by hand (`refs/muybridge/keypoints.json`): withers, croup, poll, muzzle, elbow, stifle,
+  knee or hock, fetlock and hoof per leg, contact per hoof. Legs are named by role (leading / trailing), since the
+  silhouette cannot tell near from far. The plate's stride comes out of the annotation: 9.57 frame intervals
+  (about 6.6 m in 0.38 s).
+- Wrote GALLOP-TEST.md (definitions, every tolerance, joint and acceleration limits), `src/gaitlab/gallop.ts` (the
+  analysis, shared by the lab and the test), `gait-lab.html` (dev page, not in the build), `scripts/test-gallop.mjs`
+  and `pnpm test:gallop`.
+- `Horse.ts` gained the test's interface: `gateJoints()` (named joint positions: the bone mapping Round 2 rewrites),
+  `lead`, `resetGait()`. The harness can open another page (`page`, `global`).
+
+`pnpm test:gallop` on the placeholder (GPU printed: nvidia lovelace, WebGPU; no page errors; exit 1):
+
+```
+FAIL A1  Footfall order        hindTrail 2 stance(s), the other three hooves never plant
+FAIL A2  Suspension            2 airborne phases
+FAIL A3  Gathered              widest spread 2.32 body lengths (limit 0.45)
+FAIL A4  Duty factor           5.8% / 0% / 0% / 0% (limit 18..35%)
+FAIL A5  No sliding            19.4 cm at 0.25x; at 1x no stance long enough to measure
+FAIL A6  Penetration / float   three hooves never come within 1 cm of the ground
+FAIL A7  Spine                 range 0 deg (a rigid box)
+FAIL A8  Head and neck         1 nod, lowest outside the leading fore's stance
+FAIL A9  Joint limits          elbows and stifles swing -37..37 deg (limits 10..130)
+PASS A10 Smoothness            no spikes, seam clean (the box's swing is a smooth cosine)
+FAIL B3  Contact pattern       10 mismatches over 11 frames
+FAIL B4  Segment angles        mean 40.6 deg, worst 112.8 deg (limits 12 / 25)
+FAIL B5  Keypoints             mean 0.388, worst 1.119 body lengths (limits 0.08 / 0.15)
+```
+
+Evidence for the owner (tolerances left as written): run through the same checks, the annotated plate passes the
+footfall order, the suspension (20%) and the duty factors, but fails two checks:
+- **3, gathered:** frame 2 spreads 0.54 body lengths against the 0.45 limit (frame 3 is 0.38). The legs overlap in
+  that frame, so the annotation could be part of it.
+- **8, head lowest as the leading fore bears weight:** the poll is lowest in frame 8, with the trailing fore planted,
+  0.12 body lengths below its height in the leading fore's frames (10, 11, 1). That is well beyond the annotation's
+  error.
+
+Checked by eye: the overlays of all 11 frames (keypoints on the joints, contacts on the ground line), the gait lab at
+frames 2, 4 and 8 and in 0.25x playback, and the sheet. Still for you: open the gait lab and check the annotation,
+above all the overlapping legs of the suspension frames 2 and 3 and the folded legs in frames 1 and 11.
+
+Name search: empty again. No process left running from these runs (the open Blender window and the Chrome
+windows are yours).
+
+Next: Round 2, the horse model and rig. It needs Blender open with the MCP server running and added to Claude Code.

@@ -21,8 +21,8 @@ export function gaitOf(speed: number) {
   return 1 + THREE.MathUtils.smoothstep(speed, GAIT.trot, GAIT.gallop);
 }
 
-type Leg = 'LF' | 'RF' | 'LH' | 'RH';
-const LEGS: Leg[] = ['LF', 'RF', 'LH', 'RH'];
+export type Leg = 'LF' | 'RF' | 'LH' | 'RH';
+export const LEGS: Leg[] = ['LF', 'RF', 'LH', 'RH'];
 /** footfall phase of each leg at walk, trot, gallop (rough: walk lateral sequence, trot diagonal pairs, gallop 4-beat) */
 const PLANT: Record<Leg, [number, number, number]> = {
   LH: [0, 0, 0], LF: [0.25, 0.5, 0.6], RH: [0.5, 0.5, 0.1], RF: [0.75, 0, 0.7],
@@ -31,6 +31,21 @@ const lerp3 = (a: [number, number, number], g: number) => (g <= 1 ? a[0] + (a[1]
 const wrap = (x: number) => x - Math.floor(x);
 
 export interface Footfall { leg: Leg; force: number; pos: THREE.Vector3 }
+
+/**
+ * The joints the gallop test (GALLOP-TEST.md) reads, by name. Trunk: withers, croup, poll, muzzle, and the pelvis
+ * (croup -> buttock) and thorax (withers -> girth) axes for the spine angle. Per leg (LF, RF, LH, RH): the top joint
+ * (shoulder | hip), then elbow | stifle, knee | hock, fetlock, and the hoof at the sole. This is the horse's bone
+ * mapping for the test; the rigged horse (Round 2) maps them to its bones.
+ */
+export const TRUNK_JOINTS = ['withers', 'croup', 'poll', 'muzzle', 'buttock', 'girth'] as const;
+export const FORE_JOINTS = ['shoulder', 'elbow', 'knee', 'fetlock', 'hoof'] as const;
+export const HIND_JOINTS = ['hip', 'stifle', 'hock', 'fetlock', 'hoof'] as const;
+export function gateJointNames(): string[] {
+  const out: string[] = [...TRUNK_JOINTS];
+  for (const leg of LEGS) for (const j of leg[1] === 'F' ? FORE_JOINTS : HIND_JOINTS) out.push(`${leg}_${j}`);
+  return out;
+}
 
 /** body proportions (m): withers ~1.6 m */
 const BODY = { len: 1.7, w: 0.55, h: 0.7, legTop: 0.95, legLen: 0.95, legW: 0.13 };
@@ -71,6 +86,10 @@ export class Horse {
   /** this frame's events for the sound: a hoof stamped (where), a soft snort (the placeholder does neither) */
   stamp: THREE.Vector3 | null = null;
   snort = false;
+  /** the gallop's lead: the side whose fore lands last (the placeholder's footfall table is on the right lead) */
+  readonly lead: 'L' | 'R' = 'R';
+  /** markers for the gallop test's joints (gateJoints) */
+  private gate = new Map<string, THREE.Object3D>();
 
   async load() {
     const grey = sunLit(new THREE.MeshStandardMaterial({ color: 0x8a8a8a, roughness: 0.85 }));
@@ -84,6 +103,18 @@ export class Horse {
     const barrel = box(w, h, len, grey);
     barrel.position.y = legTop + h / 2 - 0.1;
     this.body.add(barrel);
+    const mark = (name: string, parent: THREE.Object3D, x: number, y: number, z: number) => {
+      const o = new THREE.Object3D();
+      o.position.set(x, y, z);
+      parent.add(o);
+      this.gate.set(name, o);
+    };
+    // the box's top corners stand for withers and croup, its rear and belly for buttock and girth
+    const top = legTop + h - 0.1;
+    mark('withers', this.body, 0, top, len / 2 - 0.3);
+    mark('croup', this.body, 0, top, -len / 2 + 0.3);
+    mark('buttock', this.body, 0, top - 0.3, -len / 2);
+    mark('girth', this.body, 0, legTop - 0.1, len / 2 - 0.35);
     // legs: pivots at the shoulder and hip, the leg hanging below, a hoof marker at its foot
     for (const leg of LEGS) {
       const piv = new THREE.Group();
@@ -98,6 +129,13 @@ export class Horse {
       this.body.add(piv);
       this.legPivots[leg] = piv;
       this.hooves[leg] = hoof;
+      // a rigid box has no joints: they are marked along it (the pivot is the elbow / stifle)
+      const fore = leg[1] === 'F';
+      mark(`${leg}_${fore ? 'shoulder' : 'hip'}`, this.body, x, legTop + 0.3, z);
+      mark(`${leg}_${fore ? 'elbow' : 'stifle'}`, piv, 0, 0, 0);
+      mark(`${leg}_${fore ? 'knee' : 'hock'}`, piv, 0, -0.45 * legLen, 0);
+      mark(`${leg}_fetlock`, piv, 0, -0.82 * legLen, 0);
+      this.gate.set(`${leg}_hoof`, hoof);
     }
     // neck and head, pivoting at the withers
     this.neck.position.set(0, legTop + h - 0.05, len / 2 - 0.1);
@@ -108,6 +146,8 @@ export class Horse {
     head.position.set(0, 0.62, 0.52);
     head.rotation.x = 0.35;
     this.neck.add(neckBox, head);
+    mark('poll', head, 0, 0.12, -0.2);
+    mark('muzzle', head, 0, -0.02, 0.275);
     this.body.add(this.neck);
     // markers: the bit either side of the mouth, the reins on the neck
     this.bitL.position.set(0.12, 0.5, 0.75);
@@ -170,4 +210,20 @@ export class Horse {
   }
 
   get stridePhase() { return this.phase; }
+
+  /** back to the start of a stride at rest pose (the gait lab records from a known state) */
+  resetGait() {
+    this.phase = 0;
+    for (const leg of LEGS) this.legPrev[leg] = 0;
+    this.pitch = this.roll = this.lift = this.jumpPitch = this.headNod = 0;
+    this.air = false;
+  }
+
+  /** world positions of the gallop test's joints (gateJointNames), read from the current pose */
+  gateJoints(): Record<string, THREE.Vector3> {
+    this.root.updateMatrixWorld(true);
+    const out: Record<string, THREE.Vector3> = {};
+    for (const [k, o] of this.gate) out[k] = o.getWorldPosition(new THREE.Vector3());
+    return out;
+  }
 }

@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Gait Lab</title>
+  <link rel="icon" href="data:," />
+  <meta name="description" content="Valley Ride dev page: the horse's gallop beside Muybridge's Sallie Gardner plate, frame by frame." />
+  <style>
+    :root { --bg: #1d1b18; --panel: rgba(24, 22, 19, 0.92); --ink: #ece4d4; --dim: #a59a86; --pass: #7fc77f; --fail: #ef7b6b; --line: #4a443b; }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink); font: 13px/1.4 system-ui, sans-serif; overflow: hidden; }
+    #app { position: fixed; inset: 0; }
+    #ov { position: fixed; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+    #side { position: fixed; top: 0; right: 0; bottom: 64px; width: 48%; padding: 12px 14px; background: var(--panel); display: flex; flex-direction: column; gap: 10px; overflow: auto; }
+    #side h1 { font-size: 15px; margin: 0; font-weight: 600; }
+    #side .sub { color: var(--dim); }
+    #pc { width: 100%; background: #000; border: 1px solid var(--line); }
+    #checks { border-collapse: collapse; width: 100%; font-size: 12px; }
+    #checks td { padding: 2px 6px 2px 0; vertical-align: top; border-top: 1px solid var(--line); }
+    #checks .id { white-space: nowrap; color: var(--dim); }
+    .PASS { color: var(--pass); font-weight: 600; } .FAIL { color: var(--fail); font-weight: 600; } .INFO { color: var(--dim); }
+    #bar { position: fixed; left: 0; right: 0; bottom: 0; height: 64px; background: var(--panel); border-top: 1px solid var(--line); display: flex; align-items: center; gap: 10px; padding: 0 12px; flex-wrap: wrap; }
+    #bar button, #bar select { background: #2c2924; color: var(--ink); border: 1px solid var(--line); border-radius: 4px; padding: 4px 8px; font: inherit; cursor: pointer; }
+    #bar button.on { background: #5b4f3c; }
+    #scrub { flex: 1; min-width: 200px; }
+    #frames { display: flex; gap: 3px; }
+    #frames button { padding: 3px 6px; min-width: 26px; }
+    #read { font-variant-numeric: tabular-nums; color: var(--dim); min-width: 280px; }
+    #status { position: fixed; left: 12px; top: 10px; color: var(--dim); text-shadow: 0 1px 2px #000; }
+    body.capture #side, body.capture #bar, body.capture #status, body.capture #ov { display: none; }
+    @media (max-width: 900px) { #side { width: 100%; top: auto; height: 45%; } }
+  </style>
+</head>
+<body>
+  <div id="app"></div>
+  <svg id="ov"></svg>
+  <div id="status">Starting the renderer...</div>
+  <div id="side">
+    <div>
+      <h1>Gait lab: gallop vs Muybridge</h1>
+      <div class="sub">Left: our horse, side view, from one recorded stride of the real gait code. Right: the plate frame nearest the current phase. Overlay: our joints (solid), the plate's (dashed, scaled to our withers-croup).</div>
+    </div>
+    <canvas id="pc" width="900" height="560"></canvas>
+    <div id="plateinfo" class="sub"></div>
+    <table id="checks"></table>
+  </div>
+  <div id="bar">
+    <button id="play">Play</button>
+    <select id="rate"><option value="0.25" selected>0.25x</option><option value="1">1x</option></select>
+    <input id="scrub" type="range" min="0" max="239" value="0" />
+    <div id="frames"></div>
+    <label><input id="overlay" type="checkbox" checked /> overlay</label>
+    <span id="read"></span>
+  </div>
+  <script type="module" src="/src/gaitlab/main.ts"></script>
+</body>
+</html>

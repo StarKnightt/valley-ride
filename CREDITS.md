@@ -90,6 +90,12 @@ name the recording. Cut, looped and loudness-matched in those projects.
 
 The full River Morning credits are kept in `public/assets/CREDITS-river-morning.md` for reference.
 
+## Reference (not shipped)
+
+Eadweard Muybridge, "The Horse in Motion" (1878), "Sallie Gardner" card. Public domain. Library of Congress, Prints &
+Photographs Division, LC-DIG-ppmsca-06607, https://www.loc.gov/item/97502309/. Used by the gallop test and the gait
+lab (`refs/muybridge/`); it is not part of the game.
+
 ## Code and libraries
 
 - three.js r187, MIT licence, (c) 2010-2025 three.js authors. https://github.com/mrdoob/three.js

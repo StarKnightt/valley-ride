@@ -4,7 +4,8 @@
 import { createServer } from 'vite';
 import { chromium } from 'playwright';
 
-export async function startValley({ width = 1920, height = 1080, query = '', timeout = 240000, allowWebGL = false, onLoading } = {}) {
+// `page` and `global` open another page of the project that sets window[global] = { ready, engine } (the gait lab).
+export async function startValley({ width = 1920, height = 1080, query = '', timeout = 240000, allowWebGL = false, onLoading, page: pagePath = 'index.html', global: G = '__valley' } = {}) {
   let server, browser;
   const teardown = async (code, why) => {
     if (why) console.error('[teardown]', why);
@@ -40,22 +41,22 @@ export async function startValley({ width = 1920, height = 1080, query = '', tim
   page.on('pageerror', (e) => errors.push(String(e)));
   page.on('response', (r) => { if (r.status() >= 400 && !/favicon/.test(r.url())) errors.push(`HTTP ${r.status()} ${r.url()}`); });
 
-  await page.goto(`${url}/index.html?${query}`);
+  await page.goto(`${url}/${pagePath}?${query}`);
   const t0 = Date.now();
   for (;;) {
-    const st = await page.evaluate(() => ({ ready: !!window.__valley?.ready, error: window.__valley?.error, status: document.getElementById('load-status')?.textContent }));
+    const st = await page.evaluate((G) => ({ ready: !!window[G]?.ready, error: window[G]?.error, status: document.getElementById('load-status')?.textContent ?? document.getElementById('status')?.textContent }), G);
     if (st.error) { await teardown(); throw new Error('boot failed: ' + st.error); }
     if (st.ready) break;
     if (onLoading) await onLoading(page, Date.now() - t0);
     if (Date.now() - t0 > timeout) { await teardown(); throw new Error('boot timed out at: ' + st.status); }
     await page.waitForTimeout(500);
   }
-  const gpu = await page.evaluate(async () => {
-    const e = window.__valley.engine;
+  const gpu = await page.evaluate(async (G) => {
+    const e = window[G].engine;
     const a = await navigator.gpu?.requestAdapter({ powerPreference: 'high-performance' });
     const i = a?.info ?? {};
     return { backend: e.backendName, adapter: { vendor: i.vendor, architecture: i.architecture, description: i.description, fallback: i.isFallbackAdapter } };
-  });
+  }, G);
   console.log(`[gpu] backend ${gpu.backend} adapter ${JSON.stringify(gpu.adapter)}`);
   const desc = JSON.stringify(gpu.adapter);
   if ((!/webgpu/i.test(gpu.backend) && !allowWebGL) || /swiftshader|llvmpipe|software|basic render|"fallback":true/i.test(desc)) {
