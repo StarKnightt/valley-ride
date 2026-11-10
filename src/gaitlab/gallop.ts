@@ -21,8 +21,9 @@ export const TOL = {
   /** 2: one airborne phase, starting at the leading fore's lift-off (within this many samples), lasting min..max */
   suspensionStartSlack: 2,
   suspension: [0.15, 0.3] as V2,
-  /** 3: hoof spread along the body during suspension (body lengths, withers to croup) */
-  gathered: 0.45,
+  /** 3: hoof spread along the body during suspension (body lengths, withers to croup). Owner's decision after Round 1:
+   * the plate is the ground truth, so the limit is what the plate showed (0.54) plus a small margin */
+  gathered: 0.6,
   /** 4: fraction of the stride each hoof is on the ground */
   duty: [0.18, 0.35] as V2,
   /** 5: how far a planted hoof may move over its stance (m) */
@@ -31,8 +32,10 @@ export const TOL = {
   penetration: 0.01,
   /** 7: range of the spine angle over the stride (deg) */
   spineRange: 8,
-  /** 8: hysteresis for counting nods (body lengths) */
+  /** 8: hysteresis for counting nods (body lengths); the poll's lowest point must fall within this many plate frame
+   * intervals of the plate's lowest (owner's decision after Round 1: one nod per stride, timed to the plate) */
   nodHysteresis: 0.01,
+  nodFrames: 1,
   /** 9: joint flexion limits (deg from straight; negative = hyperextension) */
   joints: {
     elbow: [10, 130], knee: [-5, 130], fetlock: [-95, 130], stifle: [10, 130], hock: [-5, 120],
@@ -250,8 +253,19 @@ function checkDuty(s: Series): Check {
   return { id: 'A4', name, pass, value: ROLES.map((r, i) => `${r} ${pct(d[i])}`).join(', '), limit: `${pct(TOL.duty[0])}..${pct(TOL.duty[1])}` };
 }
 
-function checkNod(s: Series, BLunit = true): Check {
-  const name = 'Head and neck: one nod per stride, head lowest as the leading fore bears weight';
+/** lowest sample of a cyclic series, refined to a fraction of a sample by a parabola through its neighbours */
+function lowest(v: number[]) {
+  const n = v.length, i = v.indexOf(Math.min(...v));
+  const a = v[(i - 1 + n) % n], b = v[i], c = v[(i + 1) % n], den = a - 2 * b + c;
+  return i + (den > 1e-12 ? Math.max(-0.5, Math.min(0.5, (0.5 * (a - c)) / den)) : 0);
+}
+
+/**
+ * Check 8. `plateLow` is where the plate's poll is lowest, as a sample index of this series (the plate frame's
+ * aligned sample), and `frame` one plate frame interval in samples. For the plate itself the timing is its own.
+ */
+function checkNod(s: Series, plateLow?: { at: number; frame: number; label: string }): Check {
+  const name = 'Head and neck: one nod per stride, timed to the plate';
   const n = s.n, m = mean(s.poll), h = TOL.nodHysteresis;
   // count down-crossings of the mean with hysteresis, round the loop
   let armed = false, nods = 0;
@@ -261,13 +275,15 @@ function checkNod(s: Series, BLunit = true): Check {
     if (armed && v < m - h) { armed = false; if (k >= n) nods++; }
   }
   // (counted over the second lap only, so the starting state does not matter)
-  const lo = s.poll.indexOf(Math.min(...s.poll));
-  const inLF = s.contact.foreLead[lo];
+  const lo = lowest(s.poll);
   const amp = Math.max(...s.poll) - Math.min(...s.poll);
+  const limit = `exactly one nod, poll lowest within ${TOL.nodFrames} plate frame of the plate's lowest`;
+  if (!plateLow) return { id: 'A8', name, pass: nods === 1, value: `${nods} nod(s), poll range ${f(amp, 3)} body lengths, lowest at sample ${f(lo, 1)}/${n}`, limit };
+  const d = Math.abs(lo - plateLow.at), off = Math.min(d, n - d) / plateLow.frame;
   return {
-    id: 'A8', name, pass: nods === 1 && inLF,
-    value: `${nods} nod(s), poll range ${f(amp, 3)} ${BLunit ? 'body lengths' : ''}, lowest ${inLF ? 'during' : 'outside'} the leading fore's stance`,
-    limit: 'exactly one, lowest in the leading fore stance',
+    id: 'A8', name, pass: nods === 1 && off <= TOL.nodFrames,
+    value: `${nods} nod(s), poll range ${f(amp, 3)} body lengths, lowest ${f(off, 2)} plate frame(s) from the plate's lowest (${plateLow.label})`,
+    limit,
   };
 }
 
@@ -513,14 +529,17 @@ function partB(rec: Recording, plate: Plate, al: ReturnType<typeof align>): Chec
 
 export function analyse(rec: Recording, plate: Plate) {
   const s = oursSeries(rec);
-  const partA = [
-    checkFootfalls(s), checkSuspension(s), checkGathered(s), checkDuty(s), checkSlide(rec), checkGround(rec),
-    checkSpine(rec, s), checkNod(s), checkJointLimits(rec), checkSmooth(rec),
-  ];
   const al = align(rec, plate);
-  const B = partB(rec, plate, al);
   // the plate itself through the checks that can be read off it: a check the plate fails is a wrong check
   const ps = plateSeries(plate);
+  // check 8's timing: the plate frame where the poll is lowest, at its aligned sample of our stride
+  const pl = lowest(ps.poll), perFrame = rec.perStride / al.stride.N;
+  const plateLow = { at: (al.offset + pl * perFrame) % rec.perStride, frame: perFrame, label: `frame ${f(plate.frames[0].frame + pl, 1)}` };
+  const partA = [
+    checkFootfalls(s), checkSuspension(s), checkGathered(s), checkDuty(s), checkSlide(rec), checkGround(rec),
+    checkSpine(rec, s), checkNod(s, plateLow), checkJointLimits(rec), checkSmooth(rec),
+  ];
+  const B = partB(rec, plate, al);
   const reference = [checkFootfalls(ps), checkSuspension(ps), checkGathered(ps), checkDuty(ps), checkNod(ps)];
   return { checks: [...partA, ...B], align: al, reference, bodyLength: bodyLength(rec), plateSamples: ps.n };
 }
