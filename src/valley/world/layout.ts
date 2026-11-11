@@ -139,3 +139,16 @@ export const SPOTS: Spot[] = [
   { name: 'sunset', player: [-60, 390], yaw: Math.atan2(-110, -40) - Math.PI },
 ];
 export const SPAWN = SPOTS.find((s) => s.name === 'sunset')!;
+
+// ---------------------------------------------------------------- the ride (game/Game.ts)
+/** the summit's campfire: at the top of the climb on the obelisk ridge, on its brow over the valley (the ground falls
+ * away toward the valley floor below it), the obelisk behind */
+export const SUMMIT_FIRE: V2 = [-406, -386];
+/** the way from the start to the summit, along the trails: the southern meadows west, past the ruins, north up the
+ * western meadows and the climb onto the obelisk ridge */
+export const ROUTE: V2[] = [
+  [-60, 390], [-170, 350], [-270, 300], [-360, 250], [-432, 186], [-420, 120], [-394, 40], [-372, -60], [-400, -160],
+  [-440, -260], [-430, -360], SUMMIT_FIRE,
+];
+/** the four checkpoints: lantern posts either side of the trail */
+export const CHECKPOINTS: V2[] = [[-170, 350], [-360, 250], [-394, 40], [-440, -260]];

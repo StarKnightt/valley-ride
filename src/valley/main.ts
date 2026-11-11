@@ -36,7 +36,10 @@ import { Ride } from './ride/Ride';
 import { AudioSystem } from './audio/Audio';
 import { createMusic } from './audio/music';
 import { RideUI } from './ui/RideUI';
-import { SPAWN, SITES, PATHS, FORDS, site } from './world/layout';
+import { SPAWN, SITES, PATHS, FORDS, site, CHECKPOINTS, ROUTE } from './world/layout';
+import { Checkpoints } from './game/Checkpoints';
+import { Game } from './game/Game';
+import { GameUI } from './ui/GameUI';
 
 const skip = new Set((new URLSearchParams(location.search).get('skip') ?? '').split(','));
 
@@ -126,6 +129,11 @@ async function boot() {
   const ride = new Ride(hf, colliders, scene, audio, valley);
   const rideReady = ride.load({ x: SPAWN.player[0], z: SPAWN.player[1], yaw: SPAWN.yaw + Math.PI });
   const input = new Input(renderer.domElement);
+  const cps = new Checkpoints(hf, colliders, CHECKPOINTS, ROUTE);
+  scene.add(cps.group);
+  const gameUI = new GameUI();
+  gameUI.visible = false;
+  let game: Game | null = null;
   const ui = new RideUI((st) => {
     ride.bob = st.bob;
     music.volume(0.55 * st.volume, st.volume);
@@ -152,10 +160,11 @@ async function boot() {
 
   engine.setupPost();
   const fwd = new THREE.Vector3();
-  let rideOn = false, prevView: 'first' | 'cinematic' = 'first';
+  let rideOn = false, prevView: 'first' | 'cinematic' = 'cinematic';
   let glareK = 0;
   engine.addUpdater((dt, t) => {
-    const intent = input.read(dt);
+    const intent0 = input.read(dt);
+    const intent = game && rideOn ? game.update(dt, intent0, t) : intent0;
     if (input.hit('KeyT')) tod.setHour(nextTod(tod.hour));
     if (input.hit('KeyC') && ride.view !== 'photo') ride.setView(ride.view === 'first' ? 'cinematic' : 'first');
     if (input.hit('KeyP')) {
@@ -172,7 +181,8 @@ async function boot() {
     // (test harness only: a scripted camera after the ride's, for the rider's clipping checks from fixed angles)
     const camHook = params.test ? (window as unknown as { __camHook?: (c: THREE.PerspectiveCamera) => void }).__camHook : undefined;
     if (camHook) camHook(camera);
-    ui.update(input.locked, ride.view === 'photo', params.test || params.capture || !params.hud);
+    ui.update(input.locked, ride.view === 'photo', params.test || params.capture || !params.hud || game?.state === 'finish');
+    gameUI.visible = !!game && params.hud && ride.view !== 'photo' && !gameUI.hidden;
     audio.update(dt, camera, { night: tod.night, hour: tod.hour, wind: (wetness.wind.value as number), speed: ride.horse.speed, gallop: Math.max(0, ride.horse.gait - 1) });
     atmo.camHeight.value = Math.max(1, camera.position.y);
     atmo.time.value = t;
@@ -228,6 +238,8 @@ async function boot() {
   await Promise.all([layersReady, valleyReady, rideReady]);
   rideOn = true;
   ride.place(SPAWN.player[0], SPAWN.player[1], SPAWN.yaw + Math.PI);
+  // (third person by default, so the horse and rider are in the picture; C switches to her eyes)
+  ride.setView('cinematic');
   loading.status('Settling');
   const t0 = performance.now();
   while (engine.pipelinesPending > 0 && performance.now() - t0 < 120000) await frame();
@@ -235,8 +247,9 @@ async function boot() {
   loading.progress(1);
   await loading.done();
   engine.resetPacing();
+  game = new Game({ ride, audio, tod, ui: gameUI, cps, driveTime: params.tod == null, spawn: { x: SPAWN.player[0], z: SPAWN.player[1], yaw: SPAWN.yaw + Math.PI }, fire: valley.firePos });
   const w = window as unknown as Record<string, unknown>;
-  w.__valley = { ready: true, engine, tod, rig, hf, valley, camera, THREE, scene, ride, audio, music, input, colliders, PATHS, SITES, setPosed: (v: boolean) => { posed = v; }, stats: () => engine.stats() };
+  w.__valley = { ready: true, engine, tod, rig, hf, valley, camera, THREE, scene, ride, audio, music, input, colliders, PATHS, SITES, ROUTE, game, cps, gameUI, setPosed: (v: boolean) => { posed = v; }, stats: () => engine.stats() };
   console.info('[valley] ready');
 }
 

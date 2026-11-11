@@ -1,7 +1,7 @@
 /**
- * The ride's only interface: a card while the pointer is free (click to ride, the keys, the head-bob slider,
- * quality and volume), a line of key hints that fades after the first minute, and nothing at all in photo mode.
- * No HUD bars.
+ * The settings card: shown only when the rider presses Esc (the pointer was locked and is free again): the keys, the
+ * head-bob slider, quality and volume. The opening title, key hint and the rest are the game's (GameUI). Nothing at
+ * all in photo mode.
  */
 const CSS = `
 #ride-ui{position:fixed;inset:0;pointer-events:none;font:14px/1.45 "Segoe UI",system-ui,sans-serif;color:#f3ead8;z-index:20}
@@ -27,7 +27,7 @@ export class RideUI {
   private hint: HTMLDivElement;
   settings: RideSettings;
   hidden = false;
-  private shownAt = performance.now();
+  private wasLocked = false;
 
   constructor(onChange: (s: RideSettings) => void, quality: string) {
     let saved: Partial<RideSettings> = {};
@@ -48,11 +48,11 @@ export class RideUI {
       <label><span>Head bob</span><input id="ru-bob" type="range" min="0" max="1" step="0.05"></label>
       <label><span>Volume</span><input id="ru-vol" type="range" min="0" max="1" step="0.05"></label>
       <label><span>Quality</span><select id="ru-q"><option value="high">High</option><option value="medium">Medium</option><option value="low">Low</option></select></label>
-      <div class="go">Click to ride</div>`;
+      <div class="go">Click to ride on</div>`;
     this.hint = document.createElement('div');
     this.hint.id = 'ride-hint';
     this.hint.textContent = 'W walk · Shift trot (hold: gallop) · A/D steer · C camera · P photo · T time · Esc settings';
-    this.root.append(this.card, this.hint);
+    this.root.append(this.card);
     document.body.appendChild(this.root);
     const bob = this.card.querySelector('#ru-bob') as HTMLInputElement;
     const vol = this.card.querySelector('#ru-vol') as HTMLInputElement;
@@ -84,8 +84,9 @@ export class RideUI {
   update(locked: boolean, photo: boolean, test: boolean) {
     const hide = photo || test;
     this.root.style.display = hide ? 'none' : '';
-    this.card.style.opacity = locked ? '0' : '1';
-    this.card.style.pointerEvents = locked ? 'none' : 'auto';
-    if (locked && performance.now() - this.shownAt > 60000) this.hint.style.opacity = '0';
+    if (locked) this.wasLocked = true;
+    const show = !locked && this.wasLocked;
+    this.card.style.opacity = show ? '1' : '0';
+    this.card.style.pointerEvents = show ? 'auto' : 'none';
   }
 }

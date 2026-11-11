@@ -14,7 +14,7 @@ import {
 } from '../core/tsl';
 import type { Heightfield } from './Heightfield';
 import type { Colliders, HGrid } from './Colliders';
-import { HALF_WORLD, MASK_RES, SITES, site, RIVER, POOL, WORLD_SIZE, PATHS, type V2 } from './layout';
+import { HALF_WORLD, MASK_RES, SITES, site, RIVER, POOL, WORLD_SIZE, PATHS, SUMMIT_FIRE, CHECKPOINTS, type V2 } from './layout';
 import { Grass } from '../veg/Grass';
 import { Vegetation, type Species } from '../veg/Vegetation';
 import { parseGlb } from '../veg/rmGlb';
@@ -156,9 +156,6 @@ function meshGrid(root: THREE.Object3D, cell: number): HGrid | null {
   return { x0, z0, cell, nx, nz, top, low };
 }
 
-/** the camp fire, in the camp's frame */
-const FIRE_AT: V2 = [1, 1];
-
 /** fireflies: how many, in what tile (they repeat every TILE metres and wrap round the camera) */
 const FLIES = 420, TILE = 90;
 
@@ -220,6 +217,9 @@ export class Valley {
   }
   private nearSite(x: number, z: number, pad: number) {
     for (const s of SITES) if (s.r > 0 && Math.hypot(x - s.p[0], z - s.p[1]) < s.r + pad) return true;
+    // (the summit's fire and the checkpoints' lantern posts stand in the clear)
+    if (Math.hypot(x - SUMMIT_FIRE[0], z - SUMMIT_FIRE[1]) < 10 + pad) return true;
+    for (const c of CHECKPOINTS) if (Math.hypot(x - c[0], z - c[1]) < 6 + pad) return true;
     return Math.hypot(x - POOL.p[0], z - POOL.p[1]) < POOL.r + pad;
   }
 
@@ -488,7 +488,10 @@ export class Valley {
         if (q.water > 0.03 || q.dirt > 0.25 || q.rock > 0.75 || q.snow > 0.1 || this.trailDist(qx, qz) < 3.5 || this.nearSite(qx, qz, 5)) continue;
         if (this.hf.shoreDist(qx, qz) < 3 || this.slope(qx, qz) > 0.42) continue;
         const kk = j === 0 ? leafy : rng.next() < 0.75 ? leafy : 1 - leafy;
-        lists[kk].push(qx, this.hf.height(qx, qz) - 0.15, qz, rng.next() * Math.PI * 2, 0.55 + rng.next() * 0.95, rng.next());
+        const sz = 0.55 + rng.next() * 0.95;
+        lists[kk].push(qx, this.hf.height(qx, qz) - 0.15, qz, rng.next() * Math.PI * 2, sz, rng.next());
+        // (solid to the horse: it goes round a bush, never through; a little inside the leaves' edge)
+        this.colliders.circle(qx, qz, (kk ? 1.1 : 1.0) * sz * 0.8);
       }
     }
     sps.forEach((sp, i) => this.veg.place(sp, lists[i]));
@@ -649,9 +652,8 @@ export class Valley {
       const a = (k / 9) * Math.PI * 2 + rng.next() * 0.3, r = POOL.r + 2 + rng.next() * 6;
       put(big[rng.int(big.length)], POOL.p[0] + Math.cos(a) * r, POOL.p[1] + Math.sin(a) * r, 2.5 + rng.next() * 3, 0.35, true);
     }
-    // the camp's fire ring: stones round the fire
-    const camp = site('camp');
-    const fx = camp.p[0] + FIRE_AT[0], fz = camp.p[1] + FIRE_AT[1];
+    // the fire ring on the summit: stones round the fire
+    const [fx, fz] = SUMMIT_FIRE;
     for (let k = 0; k < 9; k++) {
       const a = (k / 9) * Math.PI * 2;
       put(stone, fx + Math.cos(a) * 0.95, fz + Math.sin(a) * 0.95, 0.42 + rng.next() * 0.1, 0.3, false);
@@ -820,8 +822,8 @@ export class Valley {
 
   // ---------------------------------------------------------------- campfire
   private makeFire() {
-    const camp = site('camp');
-    const fx = camp.p[0] + FIRE_AT[0], fz = camp.p[1] + FIRE_AT[1];
+    // (the ride's end: the fire burns on the summit, where the ride arrives at sunset)
+    const [fx, fz] = SUMMIT_FIRE;
     const fy = this.hf.height(fx, fz);
     this.firePos.set(fx, fy, fz);
     const t = valleyU.time;

@@ -12,6 +12,7 @@
 import * as THREE from 'three/webgpu';
 import { loadGLTF } from '../core/Assets';
 import { sunLit } from '../core/lighting';
+import { float, max, texture, uv, vec3 } from '../core/tsl';
 import { Rider } from './Rider';
 import { HorseIdle } from './HorseIdle';
 
@@ -176,7 +177,19 @@ export class Horse {
       if (m.isMesh) {
         m.castShadow = m.receiveShadow = true;
         m.frustumCulled = false; // (the bound is the rest pose's; the gallop reaches past it)
-        sunLit(m.material as THREE.Material);
+        const mat = sunLit(m.material as THREE.MeshStandardNodeMaterial);
+        if (mat.name === 'horse' && mat.map) {
+          // a deep red-brown bay in every light: the baked coat is a mid brown that a low sun pushed to orange, and its
+          // sheen read as plastic. Darker and redder in the albedo (the black points stay black), and a satin coat
+          // rather than a gloss
+          mat.colorNode = texture(mat.map, uv()).rgb.mul(vec3(0.44, 0.3, 0.3));
+          if (mat.roughnessMap) mat.roughnessNode = max(texture(mat.roughnessMap, uv()).g, float(0.62));
+        }
+        if (mat.name === 'horse_hair' && mat.map) {
+          // the mane and tail: black, and a little fuller at the cut
+          mat.colorNode = texture(mat.map, uv()).rgb.mul(0.35);
+          mat.alphaTest = 0.3;
+        }
         tris += (m.geometry.index?.count ?? m.geometry.attributes.position.count) / 3;
       }
       if ((o as THREE.Bone).isBone) { this.bones.set(o.name, o as THREE.Bone); this.restQ.set(o.name, o.quaternion.clone()); this.restP.set(o.name, o.position.clone()); }
@@ -268,6 +281,7 @@ export class Horse {
     model.traverse((o) => { if ((o as THREE.SkinnedMesh).isSkinnedMesh && o.name === 'horse') body = o as THREE.SkinnedMesh; });
     if (!body) throw new Error('horse.glb has no body mesh "horse"');
     this.idle = new HorseIdle(this.root, this.bones);
+    model.traverse((o) => { const sm = o as THREE.SkinnedMesh; if (sm.isSkinnedMesh && (sm.material as THREE.Material).name === 'horse_hair') mirrorMane(sm, this.root); });
     this.idle.setup(body, meta.markers, (leg) => this.hooves[leg].getWorldPosition(new THREE.Vector3()).applyMatrix4(this.root.matrixWorld.clone().invert()));
     for (const b of this.bones.values()) this.clipQ.set(b, b.quaternion.clone());
     pin(this.patR, 'neck1', { x: -0.085, y: w[1] + 0.06, z: w[2] + 0.17 });
@@ -478,4 +492,83 @@ export class Horse {
     }
     this.root.updateMatrixWorld(true);
   }
+}
+
+/**
+ * The mane's cards all lie down the off (right) side of the neck, so from the near side the horse showed only a thin
+ * line on its crest. A copy of every mane card mirrored across the neck's midplane (the horse is symmetric about
+ * x = 0 at rest) puts the black mane on both sides. Same bones and weights, so it moves with the neck and the mane
+ * springs. The geometry is quantized: positions reach metres only through the skin, so each vertex goes through its
+ * own blend of its bones' rest matrices, is mirrored there, and comes back through the inverse.
+ */
+function mirrorMane(hair: THREE.SkinnedMesh, root: THREE.Object3D) {
+  root.updateMatrixWorld(true);
+  hair.skeleton.update();
+  const g = hair.geometry;
+  const bones = hair.skeleton.bones;
+  const maneBone = bones.map((b) => /^(mane|neck)/.test(b.name));
+  const pre = root.matrixWorld.clone().invert().multiply(hair.matrixWorld).multiply(hair.bindMatrixInverse);
+  const boneM = bones.map((b, j) => new THREE.Matrix4().multiplyMatrices(b.matrixWorld, hair.skeleton.boneInverses[j]));
+  const si = g.getAttribute('skinIndex'), sw = g.getAttribute('skinWeight'), pos = g.getAttribute('position');
+  const n0 = pos.count;
+  const isMane = new Uint8Array(n0);
+  for (let i = 0; i < n0; i++) {
+    let ok = true, any = false;
+    for (let k = 0; k < 4; k++) if (sw.getComponent(i, k) > 0) { any = true; if (!maneBone[si.getComponent(i, k)]) ok = false; }
+    isMane[i] = ok && any ? 1 : 0;
+  }
+  const idx = g.index!;
+  const tris: number[] = [];
+  for (let t = 0; t < idx.count; t += 3) {
+    const a = idx.getX(t), b = idx.getX(t + 1), c = idx.getX(t + 2);
+    if (isMane[a] && isMane[b] && isMane[c]) tris.push(a, b, c);
+  }
+  const used = [...new Set(tris)];
+  const map = new Map(used.map((v, k) => [v, n0 + k]));
+  const n1 = n0 + used.length;
+  // every attribute as plain floats (getComponent un-normalizes, which is what the shader sees)
+  const out: Record<string, THREE.BufferAttribute> = {};
+  for (const [name, a] of Object.entries(g.attributes) as [string, THREE.BufferAttribute][]) {
+    const sz = a.itemSize;
+    const arr = name === 'skinIndex' ? new Uint16Array(n1 * sz) : new Float32Array(n1 * sz);
+    for (let i = 0; i < n0; i++) for (let c = 0; c < sz; c++) arr[i * sz + c] = a.getComponent(i, c);
+    for (const [k, v] of used.entries()) for (let c = 0; c < sz; c++) arr[(n0 + k) * sz + c] = a.getComponent(v, c);
+    out[name] = new THREE.BufferAttribute(arr, sz);
+  }
+  const acc = new THREE.Matrix4(), M = new THREE.Matrix4(), Mi = new THREE.Matrix4(), N = new THREE.Matrix3(), Ni = new THREE.Matrix3();
+  const p = new THREE.Vector3(), v3 = new THREE.Vector3();
+  const P = out.position, Nn = out.normal, T = out.tangent;
+  for (const [k, v] of used.entries()) {
+    acc.set(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+    for (let q = 0; q < 4; q++) {
+      const w = sw.getComponent(v, q);
+      if (w > 0) { const e = boneM[si.getComponent(v, q)].elements; for (let x = 0; x < 16; x++) acc.elements[x] += e[x] * w; }
+    }
+    M.multiplyMatrices(pre, acc).multiply(hair.bindMatrix);
+    Mi.copy(M).invert();
+    const j = n0 + k;
+    p.fromBufferAttribute(P, j).applyMatrix4(M);
+    p.x = -p.x;
+    p.applyMatrix4(Mi);
+    P.setXYZ(j, p.x, p.y, p.z);
+    N.getNormalMatrix(M); Ni.copy(N).invert();
+    if (Nn) { v3.fromBufferAttribute(Nn, j).applyMatrix3(N); v3.x = -v3.x; v3.applyMatrix3(Ni).normalize(); Nn.setXYZ(j, v3.x, v3.y, v3.z); }
+    if (T) {
+      v3.set(T.getX(j), T.getY(j), T.getZ(j)).transformDirection(M); v3.x = -v3.x; v3.transformDirection(Mi);
+      T.setXYZW(j, v3.x, v3.y, v3.z, -T.getW(j));
+    }
+  }
+  const ng = new THREE.BufferGeometry();
+  for (const [name, a] of Object.entries(out)) ng.setAttribute(name, a);
+  const I: number[] = [];
+  for (let t = 0; t < idx.count; t++) I.push(idx.getX(t));
+  // (mirrored: the winding turns over)
+  for (let t = 0; t < tris.length; t += 3) I.push(map.get(tris[t])!, map.get(tris[t + 2])!, map.get(tris[t + 1])!);
+  ng.setIndex(I);
+  for (const gr of g.groups) ng.addGroup(gr.start, gr.count, gr.materialIndex);
+  if (g.groups.length) ng.addGroup(idx.count, I.length - idx.count, g.groups[0].materialIndex);
+  ng.boundingSphere = g.boundingSphere; ng.boundingBox = g.boundingBox;
+  hair.geometry = ng;
+  g.dispose();
+  console.info(`[horse] mane mirrored to the near side: ${tris.length / 3} triangles`);
 }

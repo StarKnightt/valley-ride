@@ -50,7 +50,13 @@ export class Ride {
   private refuseCool = 0;
   private camSmooth = new THREE.Vector3();
   private camVel = new THREE.Vector3();
-  private cine = { yaw: 0, pitch: 4 * DEG, dist: 5.2, pos: new THREE.Vector3(), ready: false };
+  readonly cine = { yaw: 0, pitch: 4 * DEG, dist: 5.2, pos: new THREE.Vector3(), ready: false };
+  /** the game's end shot: the fire the ride ended at (null: the player's camera). The camera eases round to frame
+   * the fire and the horse side by side, looking out past them over the brow to the valley below */
+  endFocus: THREE.Vector3 | null = null;
+  private endTarget = new THREE.Vector3();
+  private endV = new THREE.Vector3();
+  private endInit = false;
   private fov = FOV;
   private reins: THREE.Mesh;
   private reinPos: Float32Array;
@@ -103,6 +109,11 @@ export class Ride {
   }
 
   place(x: number, z: number, yaw: number) {
+    this.endFocus = null;
+    this.endInit = false;
+    this.cine.yaw = 0;
+    this.cine.pitch = 4 * DEG;
+    this.cine.dist = 5.2;
     this.horse.heading = yaw;
     this.horse.speed = 0;
     this.wantSpeed = 0;
@@ -187,6 +198,8 @@ export class Ride {
       }
       // (the look drifts back toward the heading once the horse is moving and the mouse rests)
       if (Math.abs(it.lookX) < 1e-4 && horse.speed > GAIT.trot) this.lookYaw *= Math.exp(-dt * 0.25);
+    } else if (this.view === 'cinematic' && this.endFocus) {
+      // (the end shot is placed in render, below)
     } else if (this.view === 'cinematic') {
       this.cine.yaw -= it.lookX;
       this.cine.pitch = THREE.MathUtils.clamp(this.cine.pitch + it.lookY * 0.8, -5 * DEG, 50 * DEG);
@@ -376,8 +389,9 @@ export class Ride {
       if (ground === 'water') {
         this.dust.emit(ff.pos.x, this.hf.waterLevel(ff.pos.x, ff.pos.z), ff.pos.z, 'splash', ff.force);
         if (ff.force > 0.6) this.audio?.splash(ff.force * 0.6, ff.pos);
-      } else if (ground === 'dirt' || (ground === 'grass' && horse.speed > GAIT.trot + 1)) {
-        this.dust.emit(ff.pos.x, ff.pos.y, ff.pos.z, 'dust', ff.force * (ground === 'dirt' ? 1 : 0.5));
+      } else if (ground === 'dirt' && horse.speed > GAIT.trot) {
+        // (dust only off bare dirt: a hoof on turf throws up next to none)
+        this.dust.emit(ff.pos.x, ff.pos.y, ff.pos.z, 'dust', ff.force);
       }
     }
     this.dust.update(dt, camera);
@@ -407,6 +421,43 @@ export class Ride {
       camera.rotation.set(pitch, yaw, -horse.roll * 0.25 * b, 'YXZ');
       // (her hands on the reins are not good enough up close: no hands in first person, NEXT4 §4)
       horse.rider.visible = false;
+      this.reins.visible = true;
+    } else if (this.view === 'cinematic' && this.endFocus) {
+      // the end shot: from the midpoint of the horse and the fire, the camera stands off the line between them at an
+      // angle (on the side that looks west, toward the sun and the valley below), a little above, looking at the
+      // middle; it eases there from wherever the chase camera was
+      const f = this.endFocus, c = this.cine;
+      const mx = (rp.x + f.x) / 2, mz = (rp.z + f.z) / 2;
+      let ux = f.x - rp.x, uz = f.z - rp.z;
+      const ul = Math.hypot(ux, uz) || 1;
+      ux /= ul; uz /= ul;
+      const sp = Math.max(6.5, ul * 0.55 + 4.5);
+      // (the view runs from the camera toward the middle, along -r: the side whose view looks most toward the valley's
+      // middle, out over the brow and down, with the low sun behind the camera)
+      const vl = Math.hypot(mx, mz) || 1, vx = -mx / vl, vz = -mz / vl;
+      let best = -Infinity, ox = 0, oz = 0;
+      for (const a of [-1.0, 1.0]) {
+        const rx = ux * Math.cos(a) - uz * Math.sin(a), rz = ux * Math.sin(a) + uz * Math.cos(a);
+        const out = -(rx * vx + rz * vz);
+        if (out > best) { best = out; ox = rx; oz = rz; }
+      }
+      const want = this.endV.set(mx + ox * sp, 0, mz + oz * sp);
+      want.y = Math.max(this.hf.height(want.x, want.z) + 2.1, (rp.y + f.y) / 2 + 2.3);
+      if (!c.ready) { c.pos.copy(camera.position); c.ready = true; }
+      if (!this.endInit) {
+        // (from where the chase camera was looking, so the turn is one smooth move)
+        const fw0 = this.fwd(this.fw);
+        this.endTarget.set(rp.x + fw0.x * 2.5, rp.y + 2.2, rp.z + fw0.z * 2.5);
+        this.endInit = true;
+      }
+      c.pos.lerp(want, 1 - Math.exp(-dt * 0.9));
+      c.pos.y = Math.max(c.pos.y, this.hf.height(c.pos.x, c.pos.z) + 1.2);
+      this.endTarget.x += (mx - this.endTarget.x) * (1 - Math.exp(-dt * 2));
+      this.endTarget.z += (mz - this.endTarget.z) * (1 - Math.exp(-dt * 2));
+      this.endTarget.y += ((rp.y + f.y) / 2 + 1.3 - this.endTarget.y) * (1 - Math.exp(-dt * 2));
+      camera.position.copy(c.pos);
+      camera.lookAt(this.endTarget);
+      horse.rider.visible = true;
       this.reins.visible = true;
     } else if (this.view === 'cinematic') {
       const c = this.cine;
@@ -480,7 +531,7 @@ export class Ride {
         for (const leg of ['LF', 'RF', 'LH', 'RH'] as const) {
           const p = h.hooves[leg].getWorldPosition(new THREE.Vector3());
           const wet = this.hf.depth(p.x, p.z) > 0.04;
-          this.dust.emit(p.x, wet ? this.hf.waterLevel(p.x, p.z) : this.hf.height(p.x, p.z), p.z, wet ? 'splash' : 'dust', 1);
+          if (wet || this.groundKind(p.x, p.z) === 'dirt') this.dust.emit(p.x, wet ? this.hf.waterLevel(p.x, p.z) : this.hf.height(p.x, p.z), p.z, wet ? 'splash' : 'dust', 1);
           if (leg.endsWith('H')) this.audio?.hoof(wet ? 'water' : this.groundKind(p.x, p.z), 1, p);
         }
         // (round 19) the landing: a heavy thud, and the saddle's leather creaking under her
@@ -695,7 +746,7 @@ class Puffs {
     // water is clear: what a droplet shows is the sky it reflects and the glint of the sun (the lighting model's,
     // on a smooth surface), so a faint grey-white body with the sky's light added, brightest at its rim
     const rim = smoothstep(0.2, 0.9, ac);
-    const col = mix(vec3(0.3, 0.25, 0.19), vec3(0.55, 0.6, 0.62), sprayK);
+    const col = mix(vec3(0.24, 0.22, 0.19), vec3(0.55, 0.6, 0.62), sprayK);
     m.colorNode = Fn(() => vec4(col, 1))();
     m.roughnessNode = mix(float(1), float(0.25), sprayK);
     m.opacityNode = alpha;
@@ -722,9 +773,10 @@ class Puffs {
       this.next = (this.next + 1) % this.N;
       const o = i * 10, a = Math.random() * Math.PI * 2;
       if (kind === 'dust') {
-        const sp = 0.25 + Math.random() * 0.3;
-        this.p.set([x + Math.cos(a) * 0.1, y + 0.05, z + Math.sin(a) * 0.1, Math.cos(a) * sp, 0.25 + Math.random() * 0.25, Math.sin(a) * sp, 0,
-          1.6 + Math.random() * 1.0, 0.5 + 0.4 * force, 0], o);
+        // (a thin skin of dust kicked low along the ground, not a ball)
+        const sp = 0.3 + Math.random() * 0.3;
+        this.p.set([x + Math.cos(a) * 0.1, y + 0.03, z + Math.sin(a) * 0.1, Math.cos(a) * sp, 0.08 + Math.random() * 0.1, Math.sin(a) * sp, 0,
+          1.2 + Math.random() * 0.8, 0.28 + 0.2 * force, 0], o);
         continue;
       }
       const sheet = k < 2;
@@ -773,14 +825,14 @@ class Puffs {
         this.m4.makeBasis(this.ax.multiplyScalar(wid), this.ay.multiplyScalar(len), this.az);
         this.m4.setPosition(this.t);
       } else {
-        const size = P[o + 8] * (1 + u * 2.2);
+        const size = P[o + 8] * (1 + u * 1.6);
         this.q.copy(camera.quaternion);
         this.m4.compose(this.t, this.q, this.s.set(size, size, size));
       }
       this.mesh.setMatrixAt(n, this.m4);
       D[n * 4] = spray
         ? (kind > 1.5 ? 0.45 : 0.85) * Math.min(1, u * 8) * (1 - u) * (1 - u)
-        : 0.22 * Math.sin(Math.PI * Math.min(1, u * 1.4 + 0.05)) * (1 - u);
+        : 0.09 * Math.sin(Math.PI * Math.min(1, u * 1.4 + 0.05)) * (1 - u);
       D[n * 4 + 1] = spray ? 1 : 0;
       D[n * 4 + 2] = (i * 0.618034) % 1;
       D[n * 4 + 3] = kind > 1.5 ? 1 : 0;

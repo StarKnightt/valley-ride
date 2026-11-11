@@ -109,6 +109,11 @@ export class AudioSystem {
     l.src = src;
   }
 
+  /** where the game's own synthesised sounds go (the same bus and compressor as the rest) */
+  sfxOut(): AudioNode {
+    return this.bus;
+  }
+
   mute(m: boolean) {
     this.muted = m;
     if (this.master && this.ctx) this.master.gain.setTargetAtTime(m ? 0 : 0.9, this.ctx.currentTime, 0.05);

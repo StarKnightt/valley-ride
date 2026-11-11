@@ -107,6 +107,16 @@ export class Rider {
         const mat = sunLit(m.material as THREE.MeshStandardNodeMaterial);
         // the baked occlusion is the ORM texture's red channel (it dims ambient light only, as it should)
         if ((mat.name === 'rider_skin' || mat.name === 'rider_cloth') && mat.roughnessMap) mat.aoMap = mat.roughnessMap;
+        if (mat.name === 'rider_cloth' && mat.map) {
+          // her top: the same cut, in a deep forest green that never reads as skin in any light. The top is the
+          // texture's pale, unsaturated cloth (the breeches are denim blue, the boots near black): that part takes
+          // the green, keeping the knit's own shading
+          const c = texture(mat.map, uv()).rgb;
+          const lum = dot(c, vec3(0.2126, 0.7152, 0.0722));
+          const sat = c.x.max(c.y).max(c.z).sub(c.x.min(c.y).min(c.z));
+          const topK = smoothstep(0.12, 0.3, lum).mul(float(1).sub(smoothstep(0.05, 0.12, sat)));
+          mat.colorNode = TSLTyped.mix(c, vec3(0.018, 0.05, 0.026).mul(lum.div(0.5).sqrt()), topK);
+        }
         if (mat.name === 'rider_lash') {
           mat.side = THREE.DoubleSide;
           mat.alphaTest = 0.4;
