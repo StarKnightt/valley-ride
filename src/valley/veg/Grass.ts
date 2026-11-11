@@ -25,7 +25,7 @@ import {
   texture, uniform, vec2, vec3, vec4, length, type N, mx_noise_float, dot, clamp, normalize, max,
 } from '../core/tsl';
 import type { Heightfield } from '../world/Heightfield';
-import { HALF_WORLD, WORLD_SIZE } from '../world/layout';
+import { HALF_WORLD, SUMMIT_FIRE, WORLD_SIZE } from '../world/layout';
 import { wetness } from '../world/weatherUniforms';
 import { sunLit } from '../core/lighting';
 import { Q } from '../core/quality';
@@ -224,7 +224,10 @@ export class Grass {
     // (round 18) height in patches, pushed apart so there are short-cropped patches and tall stands, not one even
     // carpet; tufts: each clump's own height scatter (one noise: every call here runs per vertex)
     const tallN = smoothstep(0.2, 0.8, mx_noise_float(vec3(xz.mul(1 / 14), 8.8)).mul(0.5).add(0.5));
-    const size = mix(float(0.35), float(1.6), tallN).mul(alive).mul(smoothstep(0.05, 0.75, cover).mul(0.75).add(0.25)).mul(r3.mul(0.8).add(0.55)).mul(mix(float(0.9), float(1.08), gold)).mul(mix(float(0.45), float(1.15), smoothstep(0.1, 0.9, patch)));
+    // (the summit campfire stands in a trodden clearing: no grass over the ring of stones, short grass round it)
+    const fireD = length(xz.sub(vec2(SUMMIT_FIRE[0], SUMMIT_FIRE[1])));
+    const camp = smoothstep(2.2, 4.5, fireD).mul(mix(float(0.45), float(1), smoothstep(4.5, 9, fireD)));
+    const size = mix(float(0.35), float(1.6), tallN).mul(alive).mul(camp).mul(smoothstep(0.05, 0.75, cover).mul(0.75).add(0.25)).mul(r3.mul(0.8).add(0.55)).mul(mix(float(0.9), float(1.08), gold)).mul(mix(float(0.45), float(1.15), smoothstep(0.1, 0.9, patch)));
     // wildflowers in drifts (a meadow's flowers grow together), their cards collapsed elsewhere
     const fl = mx_noise_float(vec3(xz.mul(1 / 13), 5.3));
     const isFlower = smoothstep(1.5, 2.5, kind);

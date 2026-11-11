@@ -94,7 +94,7 @@ export class Ride {
     g.setIndex(idx);
     // (round 16: thin dark leather straps. The mid brown read as orange bars in a low sun, so it is a dark worn
     // leather now, matte with only a little sheen)
-    const m = sunLit(new THREE.MeshStandardNodeMaterial({ color: 0x3a2413, roughness: 0.6, side: THREE.DoubleSide }));
+    const m = sunLit(new THREE.MeshStandardNodeMaterial({ color: 0x1d120a, roughness: 0.82, side: THREE.DoubleSide }));
     this.reins = new THREE.Mesh(g, m);
     this.reins.frustumCulled = false;
     this.reins.castShadow = true;
@@ -639,8 +639,8 @@ export class Ride {
     const gr = h.person.gripR ? h.person.gripR.getWorldPosition(new THREE.Vector3()) : this.hands.clone().addScaledVector(left, -0.07);
     // (while her right hand pats the neck, the right rein is in her left fist)
     if (h.person.reinTransfer > 0) gr.lerp(this.v.copy(gl).addScaledVector(left, -0.025), h.person.reinTransfer);
-    // a rein is a flat strap 21 mm wide and 4 mm thick (rubber-grip reins); seen from the side it shows its width
-    const SEG = 18, SIDES = 4, HW = 0.0105, HT = 0.002;
+    // a rein is a thin leather strap, 15 mm wide and 5-6 mm thick, with a little slack: it sags a few cm between bit and fist
+    const SEG = 18, SIDES = 4, HW = 0.0075, HT = 0.0028;
     const P = this.reinPos;
     const tan = this.rt, wid = this.rw, thk = this.rk, prev = this.rpv;
     let o = 0;
@@ -650,7 +650,7 @@ export class Ride {
         // one line from the bit ring to her fist, bowed a finger's width out round the neck. Her hands go with the
         // bit (the clip: tools/blender/rider/rider_rig.py), so the rein keeps its length: a light, steady contact
         const a = r === 0 ? this.bl : this.br, b = r === 0 ? gl : gr;
-        sag = 0.006;
+        sag = 0.06;
         this.curve.points[0].copy(a);
         this.curve.points[1].copy(a).lerp(b, 0.34).addScaledVector(left, r === 0 ? 0.022 : -0.022);
         this.curve.points[2].copy(a).lerp(b, 0.68).addScaledVector(left, r === 0 ? 0.018 : -0.018);

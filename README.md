@@ -1,70 +1,39 @@
 # Valley Ride
 
-A calm horse-riding game in the browser: one valley, one day, one ride from the meadow at sunrise to the ruins on
-the summit at sunset. See [GAME.md](GAME.md) for the design and [NOTES.md](NOTES.md) for the round log.
+A calm horse ride across a mountain valley. Follow the trail past four lanterns to a campfire on the summit, and get there as the sun sets. No score, no fail state.
 
-**Status:** Round 3 of the build plan. The valley engine (sky and time of day, terrain, river, grass, trees,
-ambient sound, riding) runs. The horse is our own model and rig, and its gallop passes the gate
-(`pnpm test:gallop`, [GALLOP-TEST.md](GALLOP-TEST.md)). A model quality pass followed; three rounds of independent
-review still list serious faults in the model (NOTES.md), so the horse is not yet accepted by eye.
-Walk, trot and canter (Round 4) do not exist yet: below gallop speed the gallop cycle plays slowly. The rider and
-the landmarks are grey placeholder boxes.
+**Play: https://starknightt.github.io/valley-ride/**
 
-## Run
+Needs a browser with WebGPU: current Chrome or Edge on a desktop or laptop. It is played with a keyboard and mouse.
+
+![Valley Ride: a rider and her horse by a campfire on the summit at sunset](public/og.jpg)
+
+## Controls
+
+| Key | |
+|---|---|
+| W | ride on (walk) |
+| Shift | trot, hold it to gallop |
+| S | rein in |
+| A / D | steer |
+| Space | jump a log |
+| Mouse | look around (click to capture) |
+| C | first person or chase camera |
+| P | photo mode |
+| Esc | settings |
+
+## Run it locally
 
 ```sh
 pnpm install
-pnpm dev        # http://127.0.0.1:5240
-pnpm build      # type-check, then build to dist/
+pnpm dev
 ```
 
-Needs a browser with WebGPU (current Chrome or Edge). The GPU is asked for with `powerPreference: 'high-performance'`.
+Built with Claude Code (Opus 5.5 and Fable 5.2), three.js WebGPU and Blender. Asset sources and licences are in [CREDITS.md](CREDITS.md).
 
-### Controls
+## Support
 
-W/S speed up and slow down, A/D steer, Space jumps, mouse looks (click to capture). C switches first person and
-the chase camera, P toggles photo mode, T steps the time of day.
-
-### URL flags (dev)
-
-`?tod=9.5` or `?tod=sunrise` start hour, `?daylen=2` minutes for a full 24 h day (default 30), `?freeze=1` stops the
-clock, `?mute=1`, `?test=1` (exposes `window.__valley`), `?hud=0`, `?quality=low`.
-
-## Layout
-
-| Path | What |
-|---|---|
-| `src/gaitlab/` | the gait lab page and the gallop test's analysis (`gallop.ts`) |
-| `refs/muybridge/` | the Muybridge plate and its hand annotation, the gallop test's reference |
-| `src/valley/` | the game: `core` (engine, assets, lighting), `sky`, `world` (terrain, layout, colliders, placeholders), `water`, `veg`, `ride` (horse, ride control), `player` (camera, input), `audio`, `ui` |
-| `public/world/` | the baked valley (heights, masks), from `tools/gen-valley.ts` |
-| `public/assets/` | trees, rocks, plants, terrain textures, sounds (sources in [CREDITS.md](CREDITS.md)) |
-| `tools/` | asset builders: valley bake, terrain textures, Blender tree generators |
-| `scripts/` | headless checks and captures on the real GPU (`scripts/lib/vharness.mjs`) |
-
-Script output (captures, recordings, Blender work files) goes to `build/`, the gallop test's to `gate/`; neither is
-committed.
-
-## The gallop gate
-
-```sh
-pnpm test:gallop    # PASS / FAIL per check, exit 1 on any failure; writes gate/gallop-sheet.png
-```
-
-The gait lab, `http://127.0.0.1:5240/gait-lab.html` under `pnpm dev`, shows the horse's recorded stride beside the
-Muybridge plate: scrub bar, 0.25x playback, plate frames 1 to 11, overlay toggle and the check results. It is a dev
-page and is not in the build. See [GALLOP-TEST.md](GALLOP-TEST.md).
-
-## Headless checks
-
-```sh
-node scripts/valley-tour.mjs        # ride the trail loop on autopilot, captures in build/tour
-node scripts/ride-test.mjs          # the horse at each gait
-```
-
-The harness starts Vite and Chrome, asserts a hardware WebGPU adapter and prints it on every run, treats WGSL errors
-and HTTP failures as fatal, and closes everything on every exit path.
-
-## Credits
-
-See [CREDITS.md](CREDITS.md).
+<p>
+  <a href="https://buymeacoffee.com/prasenx"><img src="https://raw.githubusercontent.com/StarKnightt/StarKnightt/main/assets/support/bmc-button.png" alt="Buy me a coffee" height="44"></a>&nbsp;&nbsp;
+  <a href="https://github.com/sponsors/StarKnightt"><img src="https://raw.githubusercontent.com/StarKnightt/StarKnightt/main/assets/support/github-sponsor.svg" alt="Sponsor on GitHub" height="44"></a>
+</p>

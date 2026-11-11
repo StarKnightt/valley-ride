@@ -10,7 +10,7 @@
 import * as THREE from 'three/webgpu';
 import {
   Fn, float, vec3, vec4, uv, mix, smoothstep, sin, hash, instanceIndex, mx_noise_float, texture, abs, pow, clamp,
-  cameraPosition, mod, uniform, length, vec2, max, type N,
+  cameraPosition, mod, uniform, length, vec2, max, positionLocal, type N,
 } from '../core/tsl';
 import type { Heightfield } from './Heightfield';
 import type { Colliders, HGrid } from './Colliders';
@@ -25,6 +25,7 @@ import { Rng, Noise2 } from '../core/noise';
 import { sunLit } from '../core/lighting';
 import { effectMRT } from '../core/fx';
 import { params } from '../core/params';
+import { wetness } from './weatherUniforms';
 
 // River Morning's TREE_VARIANTS (ForestLayout.ts), the fields used here
 interface TreeV { id: string; kind: string; height: number; bark: 'pine' | 'fir' | 'atlas' | 'oak'; trunkR: number; needle: [number, number, number]; barkT: [number, number, number]; young?: boolean; snag?: boolean }
@@ -68,7 +69,6 @@ const LANDMARKS: Record<string, Piece[]> = {
     { m: 'column-fallen', at: [-12, -16], yaw: 0.9, size: 11, sink: 0.2 },
   ],
   obelisk: [
-    { m: 'obelisk', at: [0, 0], yaw: 0, size: 17, sink: 0.04 },
     { m: 'rubble', at: [6, 4], yaw: 1.2, size: 3.2, sink: 0.25 },
     { m: 'rubble', at: [-5, -6], yaw: 2.6, size: 2.6, sink: 0.25 },
   ],
@@ -163,6 +163,8 @@ export const valleyU = {
   time: uniform(0),
   flies: uniform(0),
   fire: uniform(1),
+  /** the fire's flicker (0.8..1), shared by its light, its glow on the ground and its coals */
+  flick: uniform(1),
 };
 
 export class Valley {
@@ -654,10 +656,6 @@ export class Valley {
     }
     // the fire ring on the summit: stones round the fire
     const [fx, fz] = SUMMIT_FIRE;
-    for (let k = 0; k < 9; k++) {
-      const a = (k / 9) * Math.PI * 2;
-      put(stone, fx + Math.cos(a) * 0.95, fz + Math.sin(a) * 0.95, 0.42 + rng.next() * 0.1, 0.3, false);
-    }
     this.colliders.circle(fx, fz, 1.6);
     // seats: two logs by the fire
     for (const [a, len] of [[0.4, 3.2], [2.6, 2.8]] as const) {
@@ -821,13 +819,103 @@ export class Valley {
   }
 
   // ---------------------------------------------------------------- campfire
+  /** a disc of `rings` x `segs` laid on the ground round (x, z), `lift` above it (decals that hug a slope) */
+  private groundDisc(x: number, z: number, r: number, rings: number, segs: number, lift: number) {
+    const pos: number[] = [], uvs: number[] = [], idx: number[] = [];
+    for (let i = 0; i <= rings; i++) for (let k = 0; k <= segs; k++) {
+      const rr = (i / rings) * r, a = (k / segs) * Math.PI * 2;
+      const px = x + Math.cos(a) * rr, pz = z + Math.sin(a) * rr;
+      pos.push(px, this.hf.height(px, pz) + lift, pz);
+      uvs.push(0.5 + 0.5 * Math.cos(a) * (i / rings), 0.5 + 0.5 * Math.sin(a) * (i / rings));
+    }
+    for (let i = 0; i < rings; i++) for (let k = 0; k < segs; k++) {
+      const p0 = i * (segs + 1) + k, p1 = p0 + segs + 1;
+      idx.push(p0, p0 + 1, p1, p0 + 1, p1 + 1, p1);
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    g.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+    g.setIndex(idx);
+    g.computeVertexNormals();
+    return g;
+  }
+
   private makeFire() {
-    // (the ride's end: the fire burns on the summit, where the ride arrives at sunset)
+    // (the ride's end: a campfire on the summit's brow. A ring of stones (the scatter, above), a bed of ash, two pairs
+    // of crossed logs burning through in the middle, orange flame tongues, embers, a thin smoke going up and away on
+    // the wind, and the fire's warm light on the ground round it)
     const [fx, fz] = SUMMIT_FIRE;
     const fy = this.hf.height(fx, fz);
     this.firePos.set(fx, fy, fz);
     const t = valleyU.time;
-    // flames: three crossed cards, noise scrolled upward through a tapered flame shape
+    // ---- the ash bed: grey ash, charcoal toward the middle, glowing coals under the logs
+    const ash = sunLit(new THREE.MeshStandardNodeMaterial({ roughness: 1 }));
+    const ar = length(uv().sub(0.5)).mul(2);
+    const an = mx_noise_float(vec3(uv().mul(14), 3.1)).mul(0.5).add(0.5);
+    const ashC = mix(vec3(0.025, 0.023, 0.022), vec3(0.17, 0.16, 0.15), smoothstep(0.2, 0.75, ar).mul(an.mul(0.6).add(0.4)));
+    ash.colorNode = mix(ashC, vec3(0.2, 0.16, 0.11), smoothstep(0.8, 1, ar));
+    const coal = float(1).sub(smoothstep(0.05, 0.5, ar)).mul(smoothstep(0.45, 0.75, mx_noise_float(vec3(uv().mul(22), t.mul(0.35))).mul(0.5).add(0.5)));
+    ash.emissiveNode = vec3(2.2, 0.55, 0.06).mul(coal).mul(valleyU.flick).mul(valleyU.fire);
+    ash.polygonOffset = true;
+    ash.polygonOffsetFactor = -2;
+    const bed = new THREE.Mesh(this.groundDisc(fx, fz, 1.0, 6, 24, 0.07), ash);
+    bed.renderOrder = 2;
+    bed.receiveShadow = true;
+    this.group.add(bed);
+    // ---- the ring of stones: lumpy fieldstones set round the ash, each its own shape and size
+    const sg = new THREE.SphereGeometry(1, 14, 10);
+    {
+      const pa = sg.getAttribute('position') as THREE.BufferAttribute, v = new THREE.Vector3();
+      for (let k = 0; k < pa.count; k++) {
+        v.fromBufferAttribute(pa, k);
+        const n = 1 + 0.16 * Math.sin(v.x * 3.1 + v.y * 2.3) * Math.cos(v.z * 2.7 - v.x) + 0.08 * Math.sin(v.y * 7.3 + v.z * 5.1);
+        v.multiplyScalar(n);
+        if (v.y < -0.2) v.y = -0.2 + (v.y + 0.2) * 0.3;
+        pa.setXYZ(k, v.x, v.y, v.z);
+      }
+      sg.computeVertexNormals();
+    }
+    const stoneM = sunLit(new THREE.MeshStandardNodeMaterial({ roughness: 0.92 }));
+    const sn = mx_noise_float(positionLocal.mul(4.5).add(2.2)).mul(0.5).add(0.5);
+    stoneM.colorNode = mix(vec3(0.045, 0.043, 0.04), vec3(0.11, 0.105, 0.095), sn).mul(mx_noise_float(positionLocal.mul(17).add(7.1)).mul(0.15).add(0.92));
+    const stones = new THREE.InstancedMesh(sg, stoneM, 11);
+    const so = new THREE.Object3D();
+    for (let k = 0; k < 11; k++) {
+      const a2 = (k / 11) * Math.PI * 2 + 0.13 * Math.sin(k * 5.3);
+      const sx = fx + Math.cos(a2) * 1.0, sz = fz + Math.sin(a2) * 1.0;
+      const r0 = 0.16 + 0.05 * Math.abs(Math.sin(k * 2.7));
+      so.position.set(sx, this.hf.height(sx, sz) - r0 * 0.22, sz);
+      so.rotation.set(0.2 * Math.sin(k * 1.3), a2 + k, 0.2 * Math.cos(k * 1.9));
+      so.scale.set(r0 * 1.25, r0 * 0.85, r0);
+      so.updateMatrix();
+      stones.setMatrixAt(k, so.matrix);
+    }
+    stones.castShadow = true;
+    stones.receiveShadow = true;
+    this.group.add(stones);
+    // ---- the firewood: two pairs of logs crossed over each other, charred, burning through where they meet
+    const wood = sunLit(new THREE.MeshStandardNodeMaterial({ roughness: 0.95 }));
+    // (uv.y runs along the log: bark at the ends, charcoal toward the middle, split by glowing cracks)
+    const mid = float(1).sub(smoothstep(0.0, 0.32, uv().y.sub(0.5).abs()));
+    const bark = mix(vec3(0.05, 0.034, 0.022), vec3(0.012, 0.011, 0.01), smoothstep(0.05, 0.6, mid));
+    const ridge = mx_noise_float(vec3(uv().mul(vec2(22, 3)), 1.3)).mul(0.5).add(0.5);
+    wood.colorNode = bark.mul(ridge.mul(0.9).add(0.45));
+    wood.roughnessNode = float(0.9);
+    const crack = smoothstep(0.55, 0.8, mx_noise_float(vec3(uv().mul(vec2(5, 26)), t.mul(0.4))).mul(0.5).add(0.5));
+    wood.emissiveNode = vec3(2.4, 0.6, 0.06).mul(crack.mul(mid).mul(mid)).mul(valleyU.flick).mul(valleyU.fire);
+    const lg = new THREE.CylinderGeometry(0.075, 0.095, 1.15, 14, 6);
+    for (let k = 0; k < 4; k++) {
+      const m = new THREE.Mesh(lg, wood);
+      const yaw = (k % 2 ? Math.PI / 2 : 0) + 0.35 + (k > 1 ? 0.45 : 0);
+      // (the lower pair on the ash, the upper pair resting across them, each a little tipped)
+      const lift = k > 1 ? 0.24 : 0.1;
+      m.position.set(fx, fy + lift, fz);
+      m.rotation.set(0, yaw, Math.PI / 2 + (k % 2 ? 0.1 : -0.12));
+      m.castShadow = true;
+      m.receiveShadow = true;
+      this.group.add(m);
+    }
+    // ---- flames: a cluster of tongues, each a pair of crossed cards with noise scrolled up through a flame shape
     const fm = new THREE.MeshBasicNodeMaterial();
     fm.transparent = true;
     fm.depthWrite = false;
@@ -835,66 +923,102 @@ export class Valley {
     fm.side = THREE.DoubleSide;
     fm.fog = true;
     const u = uv();
-    const n1 = mx_noise_float(vec3(u.x.mul(3.2), u.y.mul(2.4).sub(t.mul(2.6)), 1.7));
-    const n2 = mx_noise_float(vec3(u.x.mul(7.0), u.y.mul(5.0).sub(t.mul(4.1)), 5.3));
-    const wob = n1.mul(0.16).add(n2.mul(0.06));
+    const seed = hash(float(instanceIndex).mul(3.7).add(1.1)).mul(10);
+    const n1 = mx_noise_float(vec3(u.x.mul(3.0), u.y.mul(2.2).sub(t.mul(2.4)), seed));
+    const n2 = mx_noise_float(vec3(u.x.mul(7.0), u.y.mul(5.0).sub(t.mul(4.3)), seed.add(5.3)));
+    const wob = n1.mul(0.2).add(n2.mul(0.08));
     const xw = abs(u.x.sub(0.5).add(wob.mul(u.y))).mul(2);
-    const width = float(1).sub(u.y).pow(0.7).mul(0.85).add(0.05);
-    const body = float(1).sub(smoothstep(width.mul(0.35), width, xw)).mul(smoothstep(0.0, 0.08, u.y));
-    const tongue = smoothstep(0.15, 0.7, n1.mul(0.5).add(0.5).add(float(0.55).sub(u.y)));
+    const width = float(1).sub(u.y).pow(0.8).mul(0.8).add(0.04);
+    const body = float(1).sub(smoothstep(width.mul(0.3), width, xw)).mul(smoothstep(0.0, 0.1, u.y));
+    const tongue = smoothstep(0.2, 0.75, n1.mul(0.5).add(0.5).add(float(0.5).sub(u.y.mul(1.1))));
     const a = clamp(body.mul(tongue), 0, 1);
-    const hot = vec3(4.0, 2.4, 0.9), cool = vec3(2.2, 0.55, 0.08);
-    const col = mix(cool, hot, smoothstep(0.35, 0.9, a).mul(float(1).sub(u.y.mul(0.6))));
-    fm.colorNode = vec4(col.mul(a).mul(valleyU.fire), 1);
+    // (deep orange at the edges and tips, a yellow-orange core low down: never white)
+    const core = vec3(1.9, 0.95, 0.22), edge = vec3(1.25, 0.3, 0.035);
+    const col = mix(edge, core, smoothstep(0.45, 0.95, a).mul(float(1).sub(smoothstep(0.1, 0.6, u.y))));
+    fm.colorNode = vec4(col.mul(a).mul(0.8).mul(valleyU.fire), 1);
     // (effects write the world's up to the AO normal target, or every card would show as a box: core/fx.ts)
     fm.mrtNode = effectMRT();
-    const flame = new THREE.Group();
-    const pg = new THREE.PlaneGeometry(1.1, 1.7);
-    pg.translate(0, 0.85, 0);
-    for (let k = 0; k < 3; k++) {
-      const m = new THREE.Mesh(pg, fm);
-      m.rotation.y = (k / 3) * Math.PI;
-      m.renderOrder = 10;
-      flame.add(m);
-    }
-    flame.position.set(fx, fy + 0.15, fz);
-    this.group.add(flame);
-    // the firewood: a few charred logs leaned together
-    const wood = new THREE.MeshStandardNodeMaterial({ color: 0x1a120c, roughness: 0.95 });
-    wood.emissiveNode = vec3(0.9, 0.22, 0.03).mul(float(1).sub(smoothstep(0.0, 0.35, uv().y.sub(0.5).abs())).mul(mx_noise_float(vec3(uv().mul(9), t.mul(0.6))).mul(0.5).add(0.5))).mul(valleyU.fire).mul(0.6);
-    const lg = new THREE.CylinderGeometry(0.07, 0.09, 1.3, 7);
-    for (let k = 0; k < 5; k++) {
-      const m = new THREE.Mesh(lg, wood);
-      const a2 = (k / 5) * Math.PI * 2;
-      m.position.set(fx + Math.cos(a2) * 0.3, fy + 0.3, fz + Math.sin(a2) * 0.3);
-      m.lookAt(fx, fy + 1.1, fz);
-      m.rotateX(Math.PI / 2);
-      m.castShadow = true;
-      this.group.add(m);
-    }
-    // embers: sprites rising from the fire and fading
+    const pg = new THREE.PlaneGeometry(0.62, 1.0);
+    pg.translate(0, 0.5, 0);
+    const tongues: [number, number, number][] = [[0, 0, 1], [0.2, 0.08, 0.7], [-0.16, 0.14, 0.75], [0.05, -0.2, 0.65], [-0.12, -0.12, 0.55]];
+    const im = new THREE.InstancedMesh(pg, fm, tongues.length * 2);
+    const o = new THREE.Object3D();
+    tongues.forEach(([dx, dz, sc], k) => {
+      for (let c = 0; c < 2; c++) {
+        o.position.set(fx + dx, fy + 0.12, fz + dz);
+        o.rotation.set(0, k * 1.1 + c * Math.PI / 2, 0);
+        o.scale.set(sc, sc, sc);
+        o.updateMatrix();
+        im.setMatrixAt(k * 2 + c, o.matrix);
+      }
+    });
+    im.renderOrder = 10;
+    im.frustumCulled = false;
+    this.group.add(im);
+    // ---- embers: sparks lifted on the heat, winking out as they cool
     const em = new THREE.SpriteNodeMaterial();
     em.transparent = true;
     em.depthWrite = false;
     em.blending = THREE.AdditiveBlending;
     const i = float(instanceIndex);
-    const life = mod(t.mul(0.35).add(hash(i.mul(1.31))), 1);
+    const life = mod(t.mul(0.3).add(hash(i.mul(1.31))), 1);
     const ang = hash(i.mul(7.7)).mul(6.283);
-    const rise = life.mul(life.mul(1.2).add(2.4));
-    const drift = vec3(sin(ang).mul(0.25).add(sin(t.mul(1.7).add(i)).mul(0.15).mul(life)), rise, sin(ang.add(1.57)).mul(0.25).add(sin(t.mul(1.3).add(i.mul(2.1))).mul(0.15).mul(life)));
-    em.positionNode = drift;
-    em.scaleNode = float(0.045).mul(float(1).sub(life.mul(0.6)));
+    const rise = life.mul(life.mul(1.0).add(2.2));
+    const lean = life.mul(life).mul(1.2);
+    em.positionNode = vec3(
+      sin(ang).mul(0.2).add(sin(t.mul(1.7).add(i)).mul(0.18).mul(life)).add(wetness.windDir.x.mul(lean)),
+      rise,
+      sin(ang.add(1.57)).mul(0.2).add(sin(t.mul(1.3).add(i.mul(2.1))).mul(0.18).mul(life)).add(wetness.windDir.y.mul(lean)));
+    em.scaleNode = float(0.028).mul(float(1).sub(life.mul(0.6)));
     const ed = length(uv().sub(0.5)).mul(2);
     const eGlow = float(1).sub(smoothstep(0.2, 1, ed)).mul(float(1).sub(life)).mul(pow(sin(t.mul(9).add(i.mul(3.3))).mul(0.5).add(0.5), 2).mul(0.6).add(0.4));
-    em.colorNode = vec4(vec3(3.5, 1.1, 0.2).mul(eGlow).mul(valleyU.fire), 1);
+    em.colorNode = vec4(vec3(3.2, 0.9, 0.12).mul(eGlow).mul(valleyU.fire), 1);
     em.mrtNode = effectMRT();
     const embers = new THREE.Sprite(em);
-    embers.count = 48;
-    embers.position.set(fx, fy + 0.5, fz);
+    embers.count = 36;
+    embers.position.set(fx, fy + 0.4, fz);
     embers.frustumCulled = false;
     this.group.add(embers);
+    // ---- smoke: a thin grey column rising off the flames, widening and thinning, leaning away on the wind
+    const sm = new THREE.SpriteNodeMaterial();
+    sm.transparent = true;
+    sm.depthWrite = false;
+    sm.fog = true;
+    const si = float(instanceIndex);
+    const sl = mod(t.mul(0.09).add(si.div(28)), 1);
+    const sx = sin(t.mul(0.5).add(si.mul(1.7))).mul(0.25).mul(sl);
+    const sLean = sl.mul(sl).mul(5.5);
+    sm.positionNode = vec3(wetness.windDir.x.mul(sLean).add(sx), sl.mul(7.5), wetness.windDir.y.mul(sLean).add(sx.mul(0.6)));
+    sm.scaleNode = float(0.35).add(sl.mul(2.4));
+    const sd = length(uv().sub(0.5)).mul(2);
+    const puff = float(1).sub(smoothstep(0.1, 1, sd)).mul(mx_noise_float(vec3(uv().mul(3), si.mul(0.37).add(t.mul(0.2)))).mul(0.35).add(0.65));
+    sm.colorNode = vec3(0.3, 0.29, 0.29);
+    sm.opacityNode = puff.mul(smoothstep(0, 0.08, sl)).mul(float(1).sub(sl)).mul(0.2).mul(valleyU.fire);
+    sm.mrtNode = effectMRT();
+    const smoke = new THREE.Sprite(sm);
+    smoke.count = 28;
+    smoke.position.set(fx, fy + 0.9, fz);
+    smoke.frustumCulled = false;
+    smoke.renderOrder = 11;
+    this.group.add(smoke);
+    // ---- the fire's warm light on the ground round it (the point light lights the horse and her; this glow hugs the
+    // ground so the ring of stones and the trodden grass round it read as firelit before the sun is down)
+    const gm = new THREE.MeshBasicNodeMaterial();
+    gm.transparent = true;
+    gm.depthWrite = false;
+    gm.blending = THREE.AdditiveBlending;
+    // (no fog: added on top of the ground, the fog colour would fill the whole disc to a hard edge)
+    gm.fog = false;
+    gm.polygonOffset = true;
+    gm.polygonOffsetFactor = -3;
+    const gr = length(uv().sub(0.5)).mul(2);
+    gm.colorNode = vec4(vec3(0.9, 0.36, 0.08).mul(pow(max(float(1).sub(gr), 0), 2.2)).mul(0.1).mul(valleyU.flick).mul(valleyU.fire), 1);
+    gm.mrtNode = effectMRT();
+    const glow = new THREE.Mesh(this.groundDisc(fx, fz, 4.2, 10, 32, 0.06), gm);
+    glow.renderOrder = 3;
+    this.group.add(glow);
     // the light: flickers, brighter as the day goes
-    this.fireLight.position.set(fx, fy + 1.2, fz);
+    this.fireLight.position.set(fx, fy + 1.6, fz);
     this.fireLight.castShadow = false;
     this.scene.add(this.fireLight);
   }
@@ -953,7 +1077,8 @@ export class Valley {
     // (terrain, sky, horse) rebuilds its pipelines; with async compiles those draws drop out for a frame or two and
     // the ground flashed the clear colour. NEXT4 §8, the "blue flash")
     const far = 1 - THREE.MathUtils.smoothstep(camera.position.distanceTo(this.firePos), 180, 230);
-    this.fireLight.intensity = (25 + 150 * night) * fl * far;
+    valleyU.flick.value = fl;
+    this.fireLight.intensity = (22 + 150 * night) * fl * far;
     void dt;
   }
 }
