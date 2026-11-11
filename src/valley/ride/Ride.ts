@@ -322,7 +322,9 @@ export class Ride {
     this.refuseCool -= dt;
     this.refuse = Math.max(0, this.refuse - dt * 0.8);
     // momentum: gentle to build, firmer to rein in (and quick when refusing)
-    const acc = target > horse.speed ? (horse.speed < GAIT.trot ? 1.6 : 2.4) : (cliff || deep ? 7 : 3.2);
+    // (reining in eases off as the horse slows: firm from the gallop, then a soft last stride or two into the halt,
+    // not a constant braking that stops dead)
+    const acc = target > horse.speed ? (horse.speed < GAIT.trot ? 1.6 : 2.4) : (cliff || deep ? 7 : Math.min(2.3, 0.15 + 0.9 * (horse.speed - target)));
     const air = this.jump?.st === 'air';
     // (in the air the speed carries: no push, no braking)
     if (!air) horse.speed += THREE.MathUtils.clamp(target - horse.speed, -acc * dt, acc * dt);
@@ -584,6 +586,8 @@ export class Ride {
     this.hands.addScaledVector(f, 0.36).add(new THREE.Vector3(0, -0.42 + 0.012 * Math.sin(t * 2.1), 0));
     const gl = h.person.gripL ? h.person.gripL.getWorldPosition(new THREE.Vector3()) : this.hands.clone().addScaledVector(left, 0.07);
     const gr = h.person.gripR ? h.person.gripR.getWorldPosition(new THREE.Vector3()) : this.hands.clone().addScaledVector(left, -0.07);
+    // (while her right hand pats the neck, the right rein is in her left fist)
+    if (h.person.reinTransfer > 0) gr.lerp(this.v.copy(gl).addScaledVector(left, -0.025), h.person.reinTransfer);
     // a rein is a flat strap 21 mm wide and 4 mm thick (rubber-grip reins); seen from the side it shows its width
     const SEG = 18, SIDES = 4, HW = 0.0105, HT = 0.002;
     const P = this.reinPos;

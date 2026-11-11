@@ -13,6 +13,7 @@ import * as THREE from 'three/webgpu';
 import { loadGLTF } from '../core/Assets';
 import { sunLit } from '../core/lighting';
 import { Rider } from './Rider';
+import { HorseIdle } from './HorseIdle';
 
 /** ground speeds (m/s) of the gaits; the stride (m) of one full gallop cycle comes with the model (horse.json) */
 export const GAIT = {
@@ -29,6 +30,8 @@ export function gaitOf(speed: number) {
 export type Leg = 'LF' | 'RF' | 'LH' | 'RH';
 export const LEGS: Leg[] = ['LF', 'RF', 'LH', 'RH'];
 const wrap = (x: number) => x - Math.floor(x);
+/** samples per stride of the gallop for the blend into the standing pose (the clip's own key count) */
+const BLEND_KEYS = 240;
 
 export interface Footfall { leg: Leg; force: number; pos: THREE.Vector3 }
 
@@ -147,6 +150,19 @@ export class Horse {
   private hair: HairBone[] = [];
   /** the hair's dynamics off (the gait lab's still captures, the stress poses) */
   hairStill = false;
+  /** standing still: breath, ears, tail, head, a resting hind leg (HorseIdle) */
+  private idle!: HorseIdle;
+  /** what the clip last wrote to each bone: the mixer skips a bone whose value has not changed since the frame before,
+   *  so the layers turned on top (idle, hair springs, nod) are taken off again before it runs */
+  private clipQ = new Map<THREE.Bone, THREE.Quaternion>();
+  private blend: { bone: THREE.Bone; rest: THREE.Quaternion; axis: THREE.Vector3; theta: Float32Array }[] = [];
+  private chestBone!: THREE.Bone;
+  private chestTrack!: Float32Array;
+  private clipP = new THREE.Vector3();
+  /** how still the horse is: 0 moving .. 1 standing */
+  stillness = 1;
+  /** a point on the crest of the neck in front of the withers, on its right: where she pats it */
+  readonly patR = new THREE.Object3D();
 
   async load() {
     const [gltf, meta] = await Promise.all([loadGLTF('assets/horse/horse.glb'), fetch('./assets/horse/horse.json').then((r) => r.json() as Promise<HorseMeta>)]);
@@ -204,6 +220,39 @@ export class Horse {
     this.gallop = this.mixer.clipAction(clip);
     this.gallop.setLoop(THREE.LoopRepeat, Infinity);
     this.gallop.play();
+    // the gallop sampled once per bone as its lateral angle off rest, unwrapped round the stride (pose(): the blend
+    // into the standing pose). Every bone of this rig turns about the lateral axis only
+    this.chestBone = bone('chest');
+    this.chestTrack = new Float32Array(BLEND_KEYS * 3);
+    const samples = new Map<THREE.Bone, THREE.Quaternion[]>();
+    for (let k = 0; k < BLEND_KEYS; k++) {
+      this.gallop.time = (k / BLEND_KEYS) * clip.duration;
+      this.mixer.update(0);
+      for (const b of this.bones.values()) { if (!samples.has(b)) samples.set(b, []); samples.get(b)!.push(b.quaternion.clone()); }
+      this.chestBone.position.toArray(this.chestTrack, k * 3);
+    }
+    for (const [b, qs] of samples) {
+      const rest = this.restQ.get(b.name)!, ri = rest.clone().invert();
+      const d = qs.map((q) => ri.clone().multiply(q));
+      const big = d.reduce((m, x) => (1 - Math.abs(x.w) > 1 - Math.abs(m.w) ? x : m), d[0]);
+      const axis = new THREE.Vector3(big.x, big.y, big.z);
+      if (axis.lengthSq() < 1e-10) continue;
+      axis.normalize();
+      const raw = d.map((x) => 2 * Math.atan2(x.x * axis.x + x.y * axis.y + x.z * axis.z, x.w));
+      // (anchored where the bone is nearest rest, unwrapped from there round the stride)
+      let k0 = 0;
+      raw.forEach((v, k) => { if (Math.abs(Math.atan2(Math.sin(v), Math.cos(v))) < Math.abs(Math.atan2(Math.sin(raw[k0]), Math.cos(raw[k0])))) k0 = k; });
+      const theta = new Float32Array(BLEND_KEYS);
+      let prev = Math.atan2(Math.sin(raw[k0]), Math.cos(raw[k0]));
+      for (let s = 0; s < BLEND_KEYS; s++) {
+        const k = (k0 + s) % BLEND_KEYS;
+        prev += Math.atan2(Math.sin(raw[k] - prev), Math.cos(raw[k] - prev));
+        theta[k] = prev;
+      }
+      this.blend.push({ bone: b, rest, axis, theta });
+    }
+    for (const b of this.bones.values()) { b.quaternion.copy(this.restQ.get(b.name)!); b.position.copy(this.restP.get(b.name)!); }
+    this.clipP = this.restP.get('chest')!.clone();
     // the corrective shapes of the hindquarters, weighted by the stride phase
     model.traverse((o) => {
       const m = o as THREE.SkinnedMesh;
@@ -214,6 +263,14 @@ export class Horse {
       }
     });
     if (meta.correctives && this.morphs.length !== Object.keys(meta.correctives).length) throw new Error('horse.glb is missing a corrective morph target');
+    // standing still: the idle layers (the breath morph, the resting hind legs solved at rest)
+    let body: THREE.SkinnedMesh | null = null;
+    model.traverse((o) => { if ((o as THREE.SkinnedMesh).isSkinnedMesh && o.name === 'horse') body = o as THREE.SkinnedMesh; });
+    if (!body) throw new Error('horse.glb has no body mesh "horse"');
+    this.idle = new HorseIdle(this.root, this.bones);
+    this.idle.setup(body, meta.markers, (leg) => this.hooves[leg].getWorldPosition(new THREE.Vector3()).applyMatrix4(this.root.matrixWorld.clone().invert()));
+    for (const b of this.bones.values()) this.clipQ.set(b, b.quaternion.clone());
+    pin(this.patR, 'neck1', { x: -0.085, y: w[1] + 0.06, z: w[2] + 0.17 });
     // the hair springs: a bone's tail in its own frame is its child's position (bones point along their own +y; the
     // last bone of a chain takes its parent's length)
     for (const cfg of Object.values(HAIR)) {
@@ -240,8 +297,24 @@ export class Horse {
   /** the rig at a stride phase, the gallop weighted w (the rest is the standing pose) */
   private pose(phase: number, w: number) {
     this.gallop.time = wrap(phase) * this.gallop.getClip().duration;
-    this.gallop.setEffectiveWeight(w);
+    this.gallop.setEffectiveWeight(1);
+    for (const [b, q] of this.clipQ) b.quaternion.copy(q);
+    this.chestBone.position.copy(this.clipP);
     this.mixer.update(0);
+    // below full weight the blend toward the standing pose is taken on each bone's own lateral angle, not by the
+    // mixer: a hoof turns up to ~190 degrees off rest in the stride, and the mixer's shortest-way blend would flip it
+    if (w < 1) {
+      const x = wrap(phase) * BLEND_KEYS, i = Math.floor(x) % BLEND_KEYS, f = x - Math.floor(x), j = (i + 1) % BLEND_KEYS;
+      for (const bl of this.blend) {
+        const th = bl.theta[i] + (bl.theta[j] - bl.theta[i]) * f;
+        bl.bone.quaternion.copy(bl.rest).multiply(this.q.setFromAxisAngle(bl.axis, th * w));
+      }
+      const c = this.chestBone.position, R = this.restP.get(this.chestBone.name)!;
+      c.set(this.chestTrack[i * 3] + (this.chestTrack[j * 3] - this.chestTrack[i * 3]) * f, this.chestTrack[i * 3 + 1] + (this.chestTrack[j * 3 + 1] - this.chestTrack[i * 3 + 1]) * f, this.chestTrack[i * 3 + 2] + (this.chestTrack[j * 3 + 2] - this.chestTrack[i * 3 + 2]) * f);
+      c.lerpVectors(R, c, w);
+    }
+    for (const [b, q] of this.clipQ) q.copy(b.quaternion);
+    this.clipP.copy(this.chestBone.position);
     if (this.headNod && this.head) this.head.quaternion.multiply(this.q.setFromAxisAngle(this.v.set(1, 0, 0), this.headNod));
     this.person.pose(phase, w);
     for (const m of this.morphs) {
@@ -307,7 +380,10 @@ export class Horse {
     this.gait = gaitOf(this.speed);
     const out: Footfall[] = [];
     if (this.stress) return out;
-    const move = THREE.MathUtils.smoothstep(this.speed, 0.05, 1.0);
+    // the gallop's cycle slows with the speed (a planted hoof stays planted) and blends into the standing pose as it
+    // does, so by the time the cycle is slow the horse is mostly standing; the idle layers come in under a walk
+    const move = THREE.MathUtils.smoothstep(this.speed, 0.15, 3.2);
+    this.stillness = 1 - THREE.MathUtils.smoothstep(this.speed, 0.05, 2.2);
     this.phase = wrap(this.phase + (this.speed / GAIT.strideGallop) * dt * (this.air ? 0.35 : 1));
     const k = 1 - Math.exp(-dt * 6);
     this.pitch += (groundPitch - this.pitch) * k;
@@ -316,9 +392,11 @@ export class Horse {
     this.body.position.y = this.lift;
     this.body.rotation.set(this.pitch + this.jumpPitch, 0, this.roll, 'YXZ');
     this.pose(this.phase, move);
+    this.idle.step(dt, this.air ? 0 : this.stillness, Math.min(1, this.speed / GAIT.gallop));
+    this.snort = this.idle.snorted;
     this.root.updateMatrixWorld(true);
     this.hairStep(dt);
-    this.person.step(dt, this.root, Math.min(1, this.speed / GAIT.gallop), this.hairStill);
+    this.person.step(dt, this.root, Math.min(1, this.speed / GAIT.gallop), this.hairStill, this.air ? 0 : this.stillness, this.patR);
     // footfalls: a toe coming down onto the ground (in the horse's own frame: the terrain's tilt is the body's)
     this.body.updateMatrixWorld(true);
     for (const leg of LEGS) {
@@ -343,7 +421,7 @@ export class Horse {
     this.pitch = this.roll = this.lift = this.jumpPitch = this.headNod = 0;
     this.air = false;
     for (const h of this.hair) h.ready = false;
-    this.person.step(0, this.root, 0, true);
+    this.person.step(0, this.root, 0, true, 0, this.patR);
     this.body.position.set(0, 0, 0);
     this.body.rotation.set(0, 0, 0);
     this.pose(0, THREE.MathUtils.smoothstep(this.speed, 0.05, 1.0));

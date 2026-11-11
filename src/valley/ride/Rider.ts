@@ -15,6 +15,11 @@
  * seconds, squints when she faces a low sun, smiles a little now and then, and turns her head to look at the valley.
  * The face's three shapes (blink, squint, smile) are morph targets made in tools/blender/rider/rider_rig.py.
  *
+ * Standing still she sits up out of the gallop seat and lives a little more: looks out at the valley, glances down at
+ * the horse, now and then pats its neck (the right rein passed to her left fist) or slides a hand along the reins to
+ * take them up; her hands stay on the reins through all of it by two-bone IK on each arm, and the wind moves her
+ * ponytail.
+ *
  * The tack (saddle, pad, girth, bridle) comes on a copy of the horse's skeleton and is rebound to the horse's own
  * bones by name.
  */
@@ -26,6 +31,7 @@ import { Q } from '../core/quality';
 import { cameraPosition, clamp, dFdx, dFdy, dot, float, normalize, normalWorld, positionWorld, pow, smoothstep, texture, uv, vec3 } from '../core/tsl';
 import { atmo } from '../sky/Atmosphere';
 import { glbU } from '../veg/glb';
+import { wetness } from '../world/weatherUniforms';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const { normalViewGeometry } = TSLTyped as any;
@@ -33,15 +39,18 @@ const { normalViewGeometry } = TSLTyped as any;
 const wrap = (x: number) => x - Math.floor(x);
 const SKIN_SCATTER = 0.10;
 
-type Spring = { k: number; zeta: number; maxDeg: number; stream: number; lift: number };
+type Spring = { k: number; zeta: number; maxDeg: number; stream: number; lift: number; wind?: number };
 const SPRINGS: Record<string, { bones: string[] } & Spring> = {
   // ~3.2 Hz against a 2.4 Hz stride: it swings and lags the head's bounce without running away
   // (it trails back and down behind her and swings with each stride; it does not stand out stiff)
-  pony: { bones: ['pony1', 'pony2', 'pony3', 'pony4'], k: 300, zeta: 0.24, maxDeg: 46, stream: 0.2, lift: 0 },
+  pony: { bones: ['pony1', 'pony2', 'pony3', 'pony4'], k: 300, zeta: 0.24, maxDeg: 46, stream: 0.2, lift: 0, wind: 0.22 },
   hem: { bones: ['hemF', 'hemB'], k: 900, zeta: 0.45, maxDeg: 9, stream: 0.08, lift: 0 },
 };
 
-type SpringBone = { bone: THREE.Bone; rest: THREE.Quaternion; tail: THREE.Vector3; p: THREE.Vector3; v: THREE.Vector3; cfg: Spring; ready: boolean };
+type Arm = { up: THREE.Bone; fo: THREE.Bone; hand: THREE.Bone; at: THREE.Vector3; q: THREE.Quaternion; want: THREE.Vector3 };
+const q5 = (x: number) => (x <= 0 ? 0 : x >= 1 ? 1 : x * x * x * (10 - 15 * x + 6 * x * x));
+
+type SpringBone ={ bone: THREE.Bone; rest: THREE.Quaternion; tail: THREE.Vector3; p: THREE.Vector3; v: THREE.Vector3; cfg: Spring; ready: boolean };
 
 export class Rider {
   /** the rider's whole model (her rig, body, hair, stirrups), inside Horse.rider */
@@ -60,9 +69,25 @@ export class Rider {
   private blinkAt = 2;
   private blink = 0;
   private look = { yaw: 0, want: 0, until: 3, pitch: 0 };
+  private lookPitch = 0;
   private smile = 0.15;
   private squint = 0;
   private v = new THREE.Vector3();
+  // ---- at rest: sitting up, the arms on IK, what her hands are doing
+  /** what the clip last wrote to the bones the layers turn (the mixer skips unchanged values: Horse.clipQ) */
+  private clipQ = new Map<THREE.Bone, THREE.Quaternion>();
+  private arm = {} as Record<'L' | 'R', Arm>;
+  private upright = 0;
+  private act: { kind: 'pat' | 'adjust'; t: number; dur: number } | null = null;
+  private actIn = 6 + Math.random() * 5;
+  /** 0..1: how much of the right rein is in her left fist (while her right hand pats the neck) */
+  reinTransfer = 0;
+  private gust = 0;
+  private gustV = 0;
+  private wq = new THREE.Quaternion();
+  private wv = [new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3()];
+  private ikv = [new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3()];
+  private ikq = [new THREE.Quaternion(), new THREE.Quaternion(), new THREE.Quaternion()];
 
   /**
    * group: Horse.rider (pinned to the back bone, at rest in the model's own frame at `seat`); horseModel: the horse's
@@ -164,6 +189,14 @@ export class Rider {
       this.life.push({ bone: b, rest: b.quaternion.clone() });
       this.lifeBone[name] = b;
     }
+    const sp1 = bones.get('spine1');
+    if (!sp1) throw new Error('rider.glb has no bone spine1');
+    this.lifeBone.spine1 = sp1;
+    for (const sd of ['L', 'R'] as const) {
+      const g = (n: string) => { const b = bones.get(n + sd); if (!b) throw new Error(`rider.glb has no bone ${n}${sd}`); return b; };
+      this.arm[sd] = { up: g('upperarm'), fo: g('forearm'), hand: g('hand'), at: new THREE.Vector3(), q: new THREE.Quaternion(), want: new THREE.Vector3() };
+    }
+    for (const b of [...Object.values(this.lifeBone), ...Object.values(this.arm).flatMap((a) => [a.up, a.fo, a.hand])]) this.clipQ.set(b, b.quaternion.clone());
     scene.traverse((o) => { const m = o as THREE.Mesh; if (m.isMesh && m.morphTargetDictionary && 'blink' in m.morphTargetDictionary) this.faces.push(m); });
     if (!this.faces.length) throw new Error('rider.glb has no face morph targets (blink, squint, smile)');
     this.gripL = bones.get('gripL') ?? null;
@@ -187,20 +220,117 @@ export class Rider {
     if (!this.mixer) return;
     this.ride.time = wrap(phase) * this.ride.getClip().duration;
     this.ride.setEffectiveWeight(w);
-    // (alive() turns these on top of the clip: from rest again, whatever weight the clip has this frame)
-    for (const l of this.life) l.bone.quaternion.copy(l.rest);
+    // (alive() and the arms' IK turn these on top of the clip: back to what the clip last wrote before it runs again)
+    for (const [b, q] of this.clipQ) b.quaternion.copy(q);
     this.mixer.update(0);
+    for (const [b, q] of this.clipQ) q.copy(b.quaternion);
     // (no clip tracks on the sprung bones: back to rest, so step() turns them from where the clip carries them)
     for (const s of this.springs) s.bone.quaternion.copy(s.rest);
+  }
+
+  /** how far her right hand is into a pat of the neck, 0..1 */
+  private patShare() {
+    const a = this.act;
+    if (!a || a.kind !== 'pat') return 0;
+    return q5(a.t / 0.85) * (1 - q5((a.t - (a.dur - 0.8)) / 0.8));
+  }
+
+  /** standing, now and then: a pat on the neck, or the reins taken up a little */
+  private actions(dt: number, rest: number) {
+    if (this.act) {
+      this.act.t += dt;
+      if (this.act.t >= this.act.dur) this.act = null;
+    } else if (rest > 0.95) {
+      this.actIn -= dt;
+      if (this.actIn <= 0) {
+        this.act = Math.random() < 0.55 ? { kind: 'pat', t: 0, dur: 3.0 + Math.random() * 0.8 } : { kind: 'adjust', t: 0, dur: 1.5 + Math.random() * 0.4 };
+        this.actIn = 9 + Math.random() * 12;
+      }
+    } else this.actIn = Math.max(this.actIn, 3);
+    // (moving off ends it: the hand goes back to the reins with the pat's own ease)
+    if (this.act && rest < 0.9 && this.act.t < this.act.dur - 0.8) this.act.t = this.act.dur - 0.8;
+    // the right rein goes over to her left fist before the right hand leaves it
+    this.reinTransfer = Math.min(1, this.patShare() * 4);
+  }
+
+  /** the wrists back to where the clip holds them on the reins (or patting, or taking the reins up), by IK */
+  private hands(frame: THREE.Object3D, patAt: THREE.Object3D | null) {
+    const [fwd, up, left, g] = this.wv;
+    this.model.updateMatrixWorld(true);
+    frame.getWorldQuaternion(this.wq);
+    fwd.set(0, 0, 1).applyQuaternion(this.wq); up.set(0, 1, 0).applyQuaternion(this.wq); left.set(1, 0, 0).applyQuaternion(this.wq);
+    const R = this.arm.R, L = this.arm.L, a = this.act;
+    // sitting up, her hands come back and up off the forward seat's long reach, over the withers (the reins let out)
+    const u = this.upright;
+    R.want.copy(R.at).addScaledVector(fwd, -0.13 * u).addScaledVector(up, 0.04 * u);
+    L.want.copy(L.at).addScaledVector(fwd, -0.13 * u).addScaledVector(up, 0.04 * u);
+    if (a?.kind === 'adjust') {
+      // the left hand slides forward along the reins and closes again; the right comes in to meet it
+      const s = Math.sin(Math.PI * Math.min(1, a.t / a.dur)) ** 2;
+      L.want.addScaledVector(fwd, 0.07 * s).addScaledVector(up, 0.015 * s);
+      R.want.addScaledVector(left, 0.035 * s).addScaledVector(fwd, 0.02 * s);
+    }
+    const p = this.patShare();
+    if (a && p > 0 && patAt) {
+      // the right hand onto the crest of the neck: a few soft pats
+      patAt.getWorldPosition(g).addScaledVector(up, 0.07).addScaledVector(fwd, -0.05).addScaledVector(left, -0.02);
+      const on = a.t > 0.85 && a.t < a.dur - 0.8 ? 1 : 0;
+      g.addScaledVector(up, 0.035 * on * Math.max(0, Math.sin((a.t - 0.85) * Math.PI * 2 * 1.6)));
+      R.want.lerp(g, p);
+      // (the left fist, holding both reins now, comes a little toward the middle)
+      L.want.addScaledVector(left, -0.03 * p);
+    }
+    this.ik(L);
+    this.ik(R);
+  }
+
+  /** two bones, shoulder to wrist: the elbow stays in the plane it bends in now; the fist keeps the clip's turn */
+  private ik(a: Arm) {
+    const [A, Bp, C, T, n, elbow, wrist] = this.ikv;
+    a.up.getWorldPosition(A); a.fo.getWorldPosition(Bp); a.hand.getWorldPosition(C);
+    if (C.distanceToSquared(a.want) < 1e-8) return;
+    const l1 = Bp.distanceTo(A), l2 = C.distanceTo(Bp);
+    T.copy(a.want).sub(A);
+    const dl = THREE.MathUtils.clamp(T.length(), Math.abs(l1 - l2) + 1e-3, l1 + l2 - 1e-3);
+    T.normalize();
+    n.copy(Bp).sub(A);
+    n.addScaledVector(T, -n.dot(T));
+    if (n.lengthSq() < 1e-10) return;
+    n.normalize();
+    const cosA = (l1 * l1 + dl * dl - l2 * l2) / (2 * l1 * dl), sinA = Math.sqrt(Math.max(0, 1 - cosA * cosA));
+    elbow.copy(A).addScaledVector(T, l1 * cosA).addScaledVector(n, l1 * sinA);
+    wrist.copy(A).addScaledVector(T, dl);
+    const [q, wq, pq] = this.ikq;
+    const turnTo = (b: THREE.Bone, from: THREE.Vector3, to: THREE.Vector3) => {
+      q.setFromUnitVectors(from.normalize(), to.normalize());
+      b.getWorldQuaternion(wq).premultiply(q);
+      b.parent!.getWorldQuaternion(pq).invert();
+      b.quaternion.copy(pq.multiply(wq));
+      b.updateMatrixWorld(true);
+    };
+    turnTo(a.up, Bp.sub(A), C.copy(elbow).sub(A));
+    a.hand.getWorldPosition(C);
+    turnTo(a.fo, C.sub(elbow), Bp.copy(wrist).sub(elbow));
+    a.fo.getWorldQuaternion(wq).invert();
+    a.hand.quaternion.copy(wq.multiply(a.q));
+    a.hand.updateMatrixWorld(true);
   }
 
   /**
    * Her own life, on top of the clip (her bones point along their own +y with z across her: a turn about y is a
    * look to the side, about z a nod).
    */
-  private alive(dt: number, frame: THREE.Object3D, effort: number) {
+  private alive(dt: number, frame: THREE.Object3D, effort: number, rest: number) {
     this.t += dt;
     const B = this.lifeBone;
+    // standing: up out of the forward seat, the eyes kept level (+z folds her forward); leaning in to pat the neck
+    this.upright += (rest - this.upright) * (1 - Math.exp(-dt * 1.8));
+    const u = this.upright, lean = this.patShare() * 0.16;
+    B.spine1.rotateZ(-0.12 * u + lean * 0.3);
+    B.spine2.rotateZ(-0.11 * u + lean * 0.4);
+    B.chest.rotateZ(-0.10 * u + lean * 0.3);
+    B.neck.rotateZ(0.15 * u - lean * 0.4);
+    B.head.rotateZ(0.12 * u - lean * 0.4);
     // breathing: the chest lifts and the shoulders with it, faster and deeper the harder she rides
     const breath = Math.sin(this.t * Math.PI * 2 / (3.4 - 1.6 * effort));
     const deep = 0.010 + 0.012 * effort;
@@ -209,18 +339,25 @@ export class Rider {
     B.clavL.rotateX(deep * 0.8 * breath);
     B.clavR.rotateX(deep * 0.8 * breath);
     // looking about: mostly ahead; every few seconds a look to one side at the valley, held, then back
+    // standing she looks further and longer, out over the valley, and now and then down at the horse
     const L = this.look;
     if (this.t > L.until) {
-      const away = L.want === 0 && Math.random() < 0.6;
-      L.want = away ? (Math.random() < 0.5 ? -1 : 1) * (0.35 + 0.4 * Math.random()) : 0;
-      L.pitch = away ? -0.06 + 0.1 * Math.random() : 0;
-      L.until = this.t + (away ? 1.8 + 1.6 * Math.random() : 3.5 + 5 * Math.random());
+      const away = L.want === 0 && L.pitch === 0 && Math.random() < 0.6 + 0.2 * rest;
+      const down = away && rest > 0.8 && Math.random() < 0.3;
+      L.want = down ? (Math.random() < 0.5 ? -1 : 1) * (0.1 + 0.2 * Math.random()) : away ? (Math.random() < 0.5 ? -1 : 1) * (0.35 + (0.4 + 0.45 * rest) * Math.random()) : 0;
+      L.pitch = down ? 0.3 + 0.15 * Math.random() : away ? -0.06 + 0.1 * Math.random() : 0;
+      L.until = this.t + (down ? 1.2 + 1.2 * Math.random() : away ? 1.8 + (1.6 + 2.5 * rest) * Math.random() : 3 + 5 * Math.random());
     }
-    L.yaw += (L.want - L.yaw) * (1 - Math.exp(-dt * 3.2));
-    const nod = 0.012 * Math.sin(this.t * 0.9) + L.pitch * Math.abs(L.yaw) / 0.75;
+    // (patting the neck she watches her hand: down and to the right)
+    const pat = this.patShare();
+    const wantYaw = L.want * (1 - pat) - 0.3 * pat, wantPitch = L.pitch * (1 - pat) + 0.38 * pat;
+    L.yaw += (wantYaw - L.yaw) * (1 - Math.exp(-dt * 3.2));
+    this.lookPitch += (wantPitch - this.lookPitch) * (1 - Math.exp(-dt * 3));
+    const nod = 0.012 * Math.sin(this.t * 0.9) + this.lookPitch;
     B.neck.rotateY(L.yaw * 0.45);
     B.head.rotateY(L.yaw * 0.55);
-    B.head.rotateZ(nod);
+    B.neck.rotateZ(nod * 0.45);
+    B.head.rotateZ(nod * 0.55);
     // blinking: every 2-6 s, 0.15 s shut and open; a look to the side often starts with one
     if (this.t > this.blinkAt) { this.blink = 0.16; this.blinkAt = this.t + 2 + 4 * Math.random(); }
     this.blink = Math.max(0, this.blink - dt);
@@ -241,10 +378,21 @@ export class Rider {
   }
 
   /** the ponytail and hem springs, after pose(); frame: the horse's root (its own frame, heading and all) */
-  step(dt: number, frame: THREE.Object3D, speedShare: number, still: boolean) {
+  step(dt: number, frame: THREE.Object3D, speedShare: number, still: boolean, rest = 0, patAt: THREE.Object3D | null = null) {
     if (!this.springs.length) return;
     if (still || dt <= 0) { for (const s of this.springs) s.ready = false; return; }
-    this.alive(Math.min(dt, 0.1), frame, speedShare);
+    const h1 = Math.min(dt, 0.1);
+    // where the clip holds her wrists (on the reins), before anything turns her trunk
+    for (const a of Object.values(this.arm)) { a.hand.getWorldPosition(a.at); a.hand.getWorldQuaternion(a.q); }
+    this.actions(h1, rest);
+    this.alive(h1, frame, speedShare, rest);
+    this.hands(frame, patAt);
+    // the wind in her ponytail, gusting, in the horse's frame
+    // (smooth gusts: three slow waves that never line up)
+    this.gustV += h1;
+    this.gust = 0.5 * Math.sin(this.gustV * 0.71) + 0.3 * Math.sin(this.gustV * 1.93 + 1.1) + 0.2 * Math.sin(this.gustV * 3.7 + 2.3);
+    const wd = wetness.windDir.value as THREE.Vector2, ws = wetness.wind.value as number;
+    const windL = this.wv[4].set(wd.x, 0, wd.y).applyQuaternion(frame.getWorldQuaternion(this.wq).invert()).multiplyScalar(ws * (0.6 + 0.6 * this.gust));
     const inv = frame.matrixWorld.clone().invert();
     const fq = frame.getWorldQuaternion(new THREE.Quaternion());
     const head = new THREE.Vector3(), want = new THREE.Vector3(), a = new THREE.Vector3(), b = new THREE.Vector3();
@@ -259,8 +407,10 @@ export class Rider {
       const len = s.tail.length();
       want.z -= cfg.stream * speedShare * len;      // (the horse's frame: +z forward)
       want.y += cfg.lift * speedShare * len;
+      if (cfg.wind) want.addScaledVector(windL, cfg.wind * len);
       if (!s.ready) { s.p.copy(want); s.v.set(0, 0, 0); s.ready = true; }
-      const c = 2 * cfg.zeta * Math.sqrt(cfg.k);
+      // (standing, the ponytail settles: more damping than the gallop's lively swing)
+      const c = 2 * (cfg.zeta + 0.3 * this.upright) * Math.sqrt(cfg.k);
       for (let i = 0; i < steps; i++) {
         a.copy(want).sub(s.p).multiplyScalar(cfg.k).addScaledVector(s.v, -c);
         s.v.addScaledVector(a, h);
