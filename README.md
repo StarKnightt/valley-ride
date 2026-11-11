@@ -31,6 +31,8 @@ pnpm dev
 
 Built with Claude Code (Opus 5.5 and Fable 5.2), three.js WebGPU and Blender. Asset sources and licences are in [CREDITS.md](CREDITS.md).
 
+How it was built: [PROMPTS.md](PROMPTS.md)
+
 ## Support
 
 <p>
