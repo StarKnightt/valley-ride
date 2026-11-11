@@ -54,6 +54,9 @@ export const clouds = {
   jitterAmt: uniform(0.8),
   /** 0..1 rain falling from the thick cells (the shafts under the cloud base) */
   rain: uniform(0),
+  /** how much of the clouds' shadow reaches the land (eased down while the clock sweeps to a new hour: projected along a
+   * fast-moving sun the shadows raced over the ground and the whole frame flickered) */
+  shadowK: uniform(1),
   /** extent of the cloud map (m) */
   extent: 40000,
 };
@@ -179,7 +182,7 @@ export const cloudShadow = Fn(([worldPos]: N[]) => {
   const y = clouds.base.add(clouds.depth.mul(0.2));
   const t = y.sub(worldPos.y).div(max(l.y, 0.06));
   const c = cloudAt(worldPos.xz.add(l.xz.mul(t)));
-  const opacity = c.x.mul(smoothstep(0.02, 0.3, c.y)).mul(mix(float(0.86), float(0.96), clouds.thickness));
+  const opacity = c.x.mul(smoothstep(0.02, 0.3, c.y)).mul(mix(float(0.86), float(0.96), clouds.thickness)).mul(clouds.shadowK);
   return float(1).sub(opacity).mul(terrainShadowAt(worldPos));
 });
 
@@ -316,7 +319,11 @@ export function skyColorNode(withSun: boolean) {
     if (withSun) col.assign(gradeDome(col, above, sun));
     // night sky glow (moonlight scattered by the air, airglow, starlight) so the darkest sky is deep blue, not black,
     // and the image-based light keeps shadowed ground readable under the moon
-    col.addAssign(vec3(0.0013, 0.0024, 0.0058).mul(atmo.night));
+    // (and the moonlit haze low over the land glows: Atmosphere.ts lights the air over the ranges with 2.6 times this
+    // glow, so with a dome of plain airglow behind them the far ranges came out paler than the sky and the dark sky above
+    // their peaks read as an upside-down range. The glow fades up the first twenty-odd degrees, as a moonlit haze does)
+    const moonHaze = float(1).sub(atmo.overcast).mul(smoothstep(-0.05, 0.3, moon.y)).mul(smoothstep(0.4, 0.0, above.y));
+    col.addAssign(vec3(0.0013, 0.0024, 0.0058).mul(atmo.night).mul(moonHaze.mul(1.6).add(1)));
     // stars and moon (behind the clouds)
     const tr = transmittanceAt(float(R_GROUND).add(atmo.camHeight), max(dir.y, 0.02));
     const starL = stars(dir).mul(atmo.night).mul(float(1).sub(atmo.overcast)).mul(tr).mul(0.14);
@@ -507,7 +514,10 @@ export class Sky {
   }
 
   /** per frame: atmosphere LUTs and the cloud map; the environment map when the light has changed */
-  update(dt: number, scene: THREE.Scene, force = false) {
+  /** `sweep`: the clock is being carried to a new hour (TimeOfDay.goTo): the LUTs, the hills' shadows and the image-based
+   * light follow the sun closely (the shadows and the light on alternate frames, so one frame never pays for both), so
+   * none of them lags the sun and then catches up with a pop */
+  update(dt: number, scene: THREE.Scene, force = false, sweep = false) {
     // the sun and the haze change slowly: the LUTs every third frame
     this.n++;
     clouds.frame.value = this.n % 64;
@@ -517,11 +527,13 @@ export class Sky {
       updateViewExposure(viewDir, sun, atmo.overcast.value as number, dt, updateSunProbe(viewCamera, sun, dt));
     }
     updateGradeLook(atmo.night.value as number, atmo.overcast.value as number, (atmo.sunDir.value as THREE.Vector3).y);
-    updateTerrainShadow(this.renderer, clouds.lightDir.value as THREE.Vector3, dt, force);
+    updateTerrainShadow(this.renderer, clouds.lightDir.value as THREE.Vector3, dt, force || (sweep && this.n % 2 === 0));
+    const sk = clouds.shadowK.value as number;
+    clouds.shadowK.value = sk + ((sweep ? 0 : 1) - sk) * (1 - Math.exp(-Math.min(dt, 0.1) * (sweep ? 9 : 2.5)));
     // (and whenever the sun has moved a little since: a time-lapse clock otherwise stepped the twilight sky every
     // third frame)
     const sunNow = atmo.sunDir.value as THREE.Vector3;
-    if (force || this.n % 3 === 0 || sunNow.angleTo(this.lutSun) > 0.002) {
+    if (force || sweep || this.n % 3 === 0 || sunNow.angleTo(this.lutSun) > 0.002) {
       renderAtmosphereLUTs(this.renderer);
       this.lutSun.copy(sunNow);
     }
@@ -552,7 +564,7 @@ export class Sky {
     // (and at once when the sun has gone more than a couple of degrees: under a time-lapse clock the 0.6 s wait was
     // half an hour of twilight lit by a stale sky, then a jump of the whole frame when it caught up)
     const swept = sun.angleTo(this.lastSun) > 0.03 || look.some((v, i) => Math.abs(v - this.lastLook[i]) > 0.06);
-    if (force || this.envAge > 20 || swept || ((moved || turned) && this.envAge > 0.6)) {
+    if (force || this.envAge > 20 || (swept && !sweep) || ((moved || turned) && (sweep ? this.n % 2 === 1 : this.envAge > 0.6))) {
       this.envAge = 0;
       this.lastSun.copy(sun);
       this.lastLook = look;

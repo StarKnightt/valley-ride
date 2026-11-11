@@ -26,6 +26,7 @@ import { sunLit } from '../core/lighting';
 import { effectMRT } from '../core/fx';
 import { params } from '../core/params';
 import { wetness } from './weatherUniforms';
+import { atmo } from '../sky/Atmosphere';
 
 // River Morning's TREE_VARIANTS (ForestLayout.ts), the fields used here
 interface TreeV { id: string; kind: string; height: number; bark: 'pine' | 'fir' | 'atlas' | 'oak'; trunkR: number; needle: [number, number, number]; barkT: [number, number, number]; young?: boolean; snag?: boolean }
@@ -992,7 +993,10 @@ export class Valley {
     sm.scaleNode = float(0.35).add(sl.mul(2.4));
     const sd = length(uv().sub(0.5)).mul(2);
     const puff = float(1).sub(smoothstep(0.1, 1, sd)).mul(mx_noise_float(vec3(uv().mul(3), si.mul(0.37).add(t.mul(0.2)))).mul(0.35).add(0.65));
-    sm.colorNode = vec3(0.3, 0.29, 0.29);
+    // (lit, not a fixed grey: under the night's exposure a fixed grey glowed as a white plume. By night it is a dim
+    // blue-grey in the moonlight, and its foot takes the fire's orange from below)
+    sm.colorNode = vec3(0.3, 0.29, 0.29).mul(mix(float(1), float(0.045), atmo.night))
+      .add(vec3(0.5, 0.2, 0.05).mul(float(1).sub(sl).pow(5)).mul(valleyU.flick).mul(atmo.night).mul(0.16));
     sm.opacityNode = puff.mul(smoothstep(0, 0.08, sl)).mul(float(1).sub(sl)).mul(0.2).mul(valleyU.fire);
     sm.mrtNode = effectMRT();
     const smoke = new THREE.Sprite(sm);
@@ -1056,7 +1060,8 @@ export class Valley {
     const s = new THREE.Sprite(m);
     s.count = FLIES;
     s.frustumCulled = false;
-    s.visible = false;
+    // (always drawn, faded by valleyU.flies: a sprite first shown at dusk compiled its pipeline then, and the flies were
+    // missing for the frames the compile took; 420 tiny additive sprites at zero cost little by day)
     this.flies = s;
     this.group.add(s);
   }
@@ -1070,7 +1075,6 @@ export class Valley {
     const dawn = THREE.MathUtils.smoothstep(hour, 4.0, 4.5) * (1 - THREE.MathUtils.smoothstep(hour, 5.4, 5.9)) * 0.5;
     const ff = Math.max(dusk, dawn);
     valleyU.flies.value = ff;
-    if (this.flies) this.flies.visible = ff > 0.01;
     // the fire: always burning; its light flickers and only matters once the sun is low
     const fl = 0.82 + 0.1 * Math.sin(t * 13.1) + 0.06 * Math.sin(t * 7.3 + 1) + 0.04 * Math.sin(t * 23.7);
     // (faded out far off, never hidden: toggling a light changes the light set, and every material lit by all lights
@@ -1078,7 +1082,7 @@ export class Valley {
     // the ground flashed the clear colour. NEXT4 §8, the "blue flash")
     const far = 1 - THREE.MathUtils.smoothstep(camera.position.distanceTo(this.firePos), 180, 230);
     valleyU.flick.value = fl;
-    this.fireLight.intensity = (22 + 150 * night) * fl * far;
+    this.fireLight.intensity = (22 + 75 * night) * fl * far;
     void dt;
   }
 }

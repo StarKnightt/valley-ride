@@ -69,6 +69,8 @@ export class Rider {
   private blinkAt = 2;
   private blink = 0;
   private look = { yaw: 0, want: 0, until: 3, pitch: 0 };
+  /** a held look (the trailer's last shot: out over the valley): head yaw and pitch (rad); null = her own looking about */
+  gaze: { yaw: number; pitch: number } | null = null;
   private lookPitch = 0;
   private smile = 0.15;
   private squint = 0;
@@ -358,6 +360,7 @@ export class Rider {
       L.pitch = down ? 0.3 + 0.15 * Math.random() : away ? -0.06 + 0.1 * Math.random() : 0;
       L.until = this.t + (down ? 1.2 + 1.2 * Math.random() : away ? 1.8 + (1.6 + 2.5 * rest) * Math.random() : 3 + 5 * Math.random());
     }
+    if (this.gaze) { L.want = this.gaze.yaw; L.pitch = this.gaze.pitch; L.until = this.t + 0.5; }
     // (patting the neck she watches her hand: down and to the right)
     const pat = this.patShare();
     const wantYaw = L.want * (1 - pat) - 0.3 * pat, wantPitch = L.pitch * (1 - pat) + 0.38 * pat;

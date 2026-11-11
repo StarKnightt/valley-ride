@@ -1,5 +1,5 @@
 /**
- * Time of day: a tropical sun path (latitude 16 S), the moon roughly opposite, the light that follows them, and the
+ * Time of day: a tropical sun path (latitude 16 S), the moon a few hours behind it, the light that follows them, and the
  * exposure that adapts to the light level. A full day lasts `dayMinutes` (30 by default).
  */
 import * as THREE from 'three/webgpu';
@@ -8,7 +8,11 @@ import { clouds } from './Sky';
 
 const LAT = (-16 * Math.PI) / 180;
 const DECL = (14 * Math.PI) / 180;
-const MOON_DECL = (-6 * Math.PI) / 180;
+// (the valley's moon: about five hours behind the sun, so on a summer evening it hangs low in the west-north-west,
+// over the trail out of the spawn toward the first lanterns, and lights the night from in front of the rider:
+// 21 degrees up at 21:00, setting a little after midnight)
+const MOON_DECL = (6 * Math.PI) / 180;
+const MOON_LAG = -1.2;
 
 /** direction (x east, y up, z south) for a hour angle and declination */
 function celestial(hourAngle: number, decl: number, out: THREE.Vector3) {
@@ -35,18 +39,68 @@ export class TimeOfDay {
   /** weather inputs: 0..1 */
   overcast = 0;
   private sunColor = new THREE.Color();
+  /** a change of hour in progress (goTo): from, signed hours to go, elapsed and total seconds */
+  private sweep: { from: number; by: number; t: number; dur: number; at: Float32Array } | null = null;
+  /** true while goTo is carrying the clock to a new hour: the sky, its light and its shadows refresh every frame */
+  get sweeping() { return this.sweep !== null; }
 
   constructor(light: THREE.DirectionalLight) {
     this.light = light;
   }
 
+  /**
+   * Carry the clock to `h` over a second or two, the short way round the dial: a quick time-lapse, so the sun, the
+   * shadows, the sky and the exposure all move continuously instead of the whole frame jumping on one frame.
+   */
+  goTo(h: number) {
+    const to = ((h % 24) + 24) % 24;
+    let by = to - this.hour;
+    if (by > 12) by -= 24;
+    if (by < -12) by += 24;
+    if (Math.abs(by) < 1e-3) { this.sweep = null; return; }
+    // paced by how much the light changes, not by the clock: the hours of full night or full day pass in a blink and
+    // the twilights (the sun within a few degrees of the horizon, where the whole frame turns) take most of the time;
+    // a uniform pace put a whole sunrise into five frames
+    const N = 240, w = new Float32Array(N + 1), sun = new THREE.Vector3();
+    for (let i = 0; i <= N; i++) {
+      celestial(((this.hour + (by * i) / N - 12) / 24) * Math.PI * 2, DECL, sun);
+      const el = Math.asin(sun.y);
+      w[i] = 0.25 + Math.exp(-Math.pow((el + 0.03) / 0.11, 2)) * 3 + (el > 0 ? Math.exp(-Math.pow((el - 0.12) / 0.15, 2)) : 0);
+    }
+    const at = new Float32Array(N + 1);
+    for (let i = 1; i <= N; i++) at[i] = at[i - 1] + (w[i] + w[i - 1]) / 2;
+    const total = at[N];
+    for (let i = 0; i <= N; i++) at[i] /= total;
+    // (longer for a longer way, and for one through a twilight: 1.2 s to 2.4 s)
+    const work = (total / N) * Math.abs(by);
+    this.sweep = { from: this.hour, by, t: 0, dur: THREE.MathUtils.clamp(1.0 + 0.12 * work, 1.2, 2.4), at };
+  }
+
   setHour(h: number) {
+    this.sweep = null;
     this.hour = ((h % 24) + 24) % 24;
     this.compute();
     this.exposure = this.exposureTarget;
   }
 
   update(dt: number) {
+    if (this.sweep) {
+      const s = this.sweep;
+      s.t = Math.min(s.dur, s.t + dt);
+      const u = s.t / s.dur, e = u * u * (3 - 2 * u);
+      // the hour where the light's own progress reaches e
+      const at = s.at, N = at.length - 1;
+      let lo = 0, hi = N;
+      while (hi - lo > 1) { const mid = (lo + hi) >> 1; if (at[mid] < e) lo = mid; else hi = mid; }
+      const f = at[hi] > at[lo] ? (e - at[lo]) / (at[hi] - at[lo]) : 0;
+      const k = (lo + f) / N;
+      this.hour = (((s.from + s.by * k) % 24) + 24) % 24;
+      this.compute();
+      // (the eye keeps up with a time-lapse: exposure follows the light exactly, no adaptation lag to catch up after)
+      this.exposure = this.exposureTarget;
+      if (s.t >= s.dur) this.sweep = null;
+      return;
+    }
     if (!this.frozen) this.hour = (this.hour + (dt / (this.dayMinutes * 60)) * 24) % 24;
     this.compute();
     // eye adaptation: faster toward darker than toward brighter, as eyes do (and short enough to follow clouds); with
@@ -60,12 +114,8 @@ export class TimeOfDay {
   private compute() {
     const H = ((this.hour - 12) / 24) * Math.PI * 2;
     celestial(H, DECL, this.sun);
-    // a moon just past full: it rises in the east around sunset, so at dusk it is just clear of the sea off the spawn
-    // beach and lays its path on the water, lights the whole night (no black hours before moonrise) and sets in the
-    // dawn twilight
-    // (NEXT4 §7: an hour later than it was, so through the evening it hangs 15-45 degrees up, where a rider looking ahead
-    // sees it, rather than overhead out of every riding view)
-    celestial(H + Math.PI - 0.17, MOON_DECL, this.moon);
+    // the moon trails the sun across the sky (MOON_LAG): high at dusk, low in the west through the evening
+    celestial(H + MOON_LAG, MOON_DECL, this.moon);
     this.sunElevation = Math.asin(this.sun.y);
     this.night = THREE.MathUtils.smoothstep(-this.sun.y, -0.02, 0.16);
     atmo.sunDir.value.copy(this.sun);
@@ -115,12 +165,14 @@ export class TimeOfDay {
       this.light.color.setRGB(0.62, 0.74, 1.0);
       // (fading in through the twilight: the key light hands over from the sun at a moon already up, and a moonlight
       // switched on at full strength would flip every shadow in one frame)
-      const moonE = 0.058 * THREE.MathUtils.smoothstep(m, -0.02, 0.22) * THREE.MathUtils.smoothstep(-this.sun.y, 0.035, 0.14);
+      const moonE = 0.11 * THREE.MathUtils.smoothstep(m, -0.02, 0.22) * THREE.MathUtils.smoothstep(-this.sun.y, 0.035, 0.14);
       this.light.intensity = moonE * (1 - this.overcast * 0.9);
       (clouds.lightDir.value as THREE.Vector3).copy(this.moon);
       // moonlit cumulus read dim and grey-blue to the night-adapted eye, not as the white daytime clouds a long
       // exposure shows (at the moon's full light they outshone the sand)
-      cl.setRGB(0.72, 0.8, 0.95).multiplyScalar(moonE * 0.18);
+      // (and dimmer than they were before the moonlight was doubled: in their forward-scatter lobe the ones beside the
+      // moon came out three times the sky's brightness, white blots with the raymarch's dither showing as a halftone)
+      cl.setRGB(0.72, 0.8, 0.95).multiplyScalar(moonE * 0.04);
     }
     // exposure: from the illuminance of a horizontal surface (sun + sky), toward a mid-grey key. With the sun low the
     // meter takes the light on surfaces that face it (walls, trunks, cliffs: ten times what a horizontal one gets),
@@ -145,7 +197,7 @@ export class TimeOfDay {
     // the palms in silhouette instead of a black screen between moonset and dawn)
     const moonUp = THREE.MathUtils.smoothstep(this.moon.y, -0.02, 0.15);
     // (under the moon the cap holds the white sand to a dim blue-grey, below the sky's glow, not snow under a lamp)
-    const maxExp = THREE.MathUtils.lerp(30, 11, moonUp);
+    const maxExp = THREE.MathUtils.lerp(30, 14, moonUp);
     this.exposureTarget = THREE.MathUtils.clamp(0.42 / Math.pow(L, 0.66), 0.15, maxExp) * (1 - 0.35 * this.overcast);
     void clouds;
   }

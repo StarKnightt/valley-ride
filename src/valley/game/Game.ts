@@ -65,6 +65,15 @@ export class Game {
     if (d.driveTime) { d.tod.frozen = true; d.tod.setHour(HOUR_START); }
   }
 
+  /** the player has picked the hour (the time buttons, T): from now on it is theirs, the climb no longer sets the sun */
+  pickTime() {
+    this.d.driveTime = false;
+    this.d.tod.frozen = true;
+  }
+
+  /** whether the game still sets the hour (the sun sinking as the summit nears) */
+  get drivesTime() { return this.d.driveTime; }
+
   get checkpointCount() { return this.d.cps.points.length; }
 
   /** per frame, before the ride: returns the intent the ride should use */

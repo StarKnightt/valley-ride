@@ -1,7 +1,8 @@
 /**
  * The ride's game interface, kept as quiet as the valley: a title card over the first view, a one-line hint of the
  * controls that fades, a small note as each checkpoint passes, and at the summit "valley crossed" with the ride's
- * time and a quiet way to ride again. No bars, no score, nothing that stays on screen.
+ * time and a quiet way to ride again. No bars, no score. The one thing that stays: four small buttons in the top
+ * right corner for the time of day (T steps through them too).
  */
 const CSS = `
 #game-ui{position:fixed;inset:0;pointer-events:none;z-index:21;color:#f6ecd9;
@@ -29,8 +30,26 @@ const CSS = `
   opacity:.8;transition:opacity .3s,border-color .3s}
 #gu-end button:hover,#gu-end button:focus-visible{opacity:1;border-color:rgba(246,236,217,.9);outline:none}
 #gu-end:not(.on) button{pointer-events:none}
+#gu-time{position:absolute;top:max(14px,env(safe-area-inset-top));right:max(14px,env(safe-area-inset-right));display:flex;align-items:center;gap:2px;
+  padding:3px;border-radius:999px;background:rgba(22,15,9,.34);border:1px solid rgba(246,236,217,.16);backdrop-filter:blur(6px);
+  -webkit-backdrop-filter:blur(6px);pointer-events:auto;opacity:.78;transition:opacity .3s}
+#gu-time:hover{opacity:1}
+#gu-time button{all:unset;box-sizing:border-box;width:30px;height:30px;border-radius:50%;display:grid;place-items:center;cursor:pointer;color:#f6ecd9;
+  opacity:.62;transition:opacity .2s,background-color .2s}
+#gu-time button:hover{opacity:1;background:rgba(246,236,217,.1)}
+#gu-time button:focus-visible{opacity:1;outline:1px solid rgba(246,236,217,.7);outline-offset:-2px}
+#gu-time button[aria-pressed=true]{opacity:1;background:rgba(246,236,217,.2)}
+#gu-time svg{width:17px;height:17px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+#gu-time kbd{font:600 10px/1 "Segoe UI",system-ui,sans-serif;opacity:.55;padding:0 7px 0 5px;letter-spacing:.02em}
 @media (max-width:560px){#gu-hint{font-size:13px}#gu-hint .sep{margin:0 6px}}
 `;
+
+const ICONS: Record<string, string> = {
+  morning: '<path d="M3 17h18M6.5 17a5.5 5.5 0 0 1 11 0"/><path d="M12 4.5v3M4.6 9.6l2 1.6M19.4 9.6l-2 1.6"/><path d="M5 20.5h14" opacity=".55"/>',
+  noon: '<circle cx="12" cy="12" r="4"/><path d="M12 2.5v2.2M12 19.3v2.2M2.5 12h2.2M19.3 12h2.2M5.3 5.3l1.6 1.6M17.1 17.1l1.6 1.6M5.3 18.7l1.6-1.6M17.1 6.9l1.6-1.6"/>',
+  sunset: '<path d="M3 15h18M7 15a5 5 0 0 1 10 0"/><path d="M6 18.5h12M9 21.5h6" opacity=".55"/><path d="M12 5v4M10 7l2 2 2-2"/>',
+  night: '<path d="M19.5 14.6A8 8 0 1 1 9.4 4.5a6.4 6.4 0 0 0 10.1 10.1z"/><path d="M17.2 3.8v2.4M16 5h2.4" stroke-width="1.3"/>',
+};
 
 export class GameUI {
   readonly root = document.createElement('div');
@@ -43,6 +62,10 @@ export class GameUI {
   onRideAgain: () => void = () => {};
   /** held hidden (the harness's clean frames) */
   hidden = false;
+  /** a time button pressed (or T): the name of the pick */
+  onPickTime: (name: 'morning' | 'noon' | 'sunset' | 'night') => void = () => {};
+  private timeBar: HTMLDivElement;
+  private pick: string | null = 'sunset';
 
   constructor() {
     const st = document.createElement('style');
@@ -63,7 +86,36 @@ export class GameUI {
     this.end = el('gu-end', '<h2>valley crossed</h2><div class="time"></div><button type="button">ride again</button>');
     this.timeEl = this.end.querySelector('.time') as HTMLDivElement;
     this.end.querySelector('button')!.addEventListener('click', () => this.onRideAgain());
+    this.timeBar = document.createElement('div');
+    this.timeBar.id = 'gu-time';
+    this.timeBar.setAttribute('role', 'group');
+    this.timeBar.setAttribute('aria-label', 'Time of day');
+    for (const name of ['morning', 'noon', 'sunset', 'night'] as const) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.dataset.t = name;
+      b.title = name[0].toUpperCase() + name.slice(1);
+      b.setAttribute('aria-label', b.title);
+      b.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true">${ICONS[name]}</svg>`;
+      // (no focus left on it: Space, the jump, would press it again)
+      b.addEventListener('mousedown', (e) => e.preventDefault());
+      b.addEventListener('click', (e) => { e.stopPropagation(); this.onPickTime(name); b.blur(); });
+      this.timeBar.appendChild(b);
+    }
+    const k = document.createElement('kbd');
+    k.textContent = 'T';
+    k.title = 'T steps through the times';
+    this.timeBar.appendChild(k);
+    this.root.appendChild(this.timeBar);
+    this.timePick = 'sunset';
     document.body.appendChild(this.root);
+  }
+
+  /** the pick shown pressed (null: none, an hour set some other way) */
+  get timePick() { return this.pick as 'morning' | 'noon' | 'sunset' | 'night' | null; }
+  set timePick(name: string | null) {
+    this.pick = name;
+    for (const b of this.timeBar.querySelectorAll('button')) b.setAttribute('aria-pressed', String(b.dataset.t === name));
   }
 
   set visible(v: boolean) { this.root.style.display = v ? '' : 'none'; }

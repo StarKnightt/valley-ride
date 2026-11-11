@@ -30,6 +30,8 @@ const rainU = {
 
 export class Weather {
   kind: WeatherKind = 'clear';
+  /** 0 day .. 1 night (set per frame from the clock) */
+  night = 0;
   /** frames left in which the rain is drawn even when dry, so its pipelines compile up front */
   prime = 0;
   /** 0..1 progress through the current phase */
@@ -165,7 +167,8 @@ export class Weather {
 
   private apply() {
     const c = this.cover;
-    clouds.coverage.value = THREE.MathUtils.lerp(0.38, 0.98, c);
+    // (a fair night clears: fewer, thinner clouds, so the moon and the stars have the sky)
+    clouds.coverage.value = THREE.MathUtils.lerp(0.38 - 0.12 * this.night, 0.98, c);
     clouds.thickness.value = THREE.MathUtils.lerp(0.2, 1.0, c);
     // fair-weather cumulus are about as tall as they are wide (taller, they read as cartoon cauliflower towers);
     // the towers grow as the squall gathers

@@ -44,11 +44,12 @@ export class AudioSystem {
 
   constructor(private hf: Heightfield) {}
 
-  start() {
+  /** `ctx`: render into this context instead of the speakers (the trailer's offline soundtrack) */
+  start(ctx?: BaseAudioContext) {
     if (this.started) return;
     this.started = true;
     const Ctx = window.AudioContext ?? (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-    this.ctx = new Ctx({ latencyHint: 'interactive' });
+    this.ctx = (ctx ?? new Ctx({ latencyHint: 'interactive' })) as AudioContext;
     this.master = this.ctx.createGain();
     this.master.gain.value = this.muted ? 0 : 0.9;
     const comp = this.ctx.createDynamicsCompressor();
@@ -77,9 +78,15 @@ export class AudioSystem {
     L('fire', ['amb_campfire'], 0.5);
     // the rush of air past the ears at speed (the wind loop again, its own gain, band-passed later by speed)
     L('rush', ['amb_wind'], 0.75);
-    for (const l of this.layers) this.load(l.files[0]).then((b) => b && this.loop(l, b));
-    for (const list of Object.values(GROUND_FILES)) for (const f of list) this.load(f);
-    for (const f of ['splash_big', 'splash_small', 'sfx_bird_meadowlark_01', 'sfx_bird_meadowlark_02', 'sfx_owl_hoot_01', 'sfx_owl_hoot_02']) this.load(f);
+    for (const l of this.layers) this.pending.push(this.load(l.files[0]).then((b) => { if (b) this.loop(l, b); return b; }));
+    for (const list of Object.values(GROUND_FILES)) for (const f of list) this.pending.push(this.load(f));
+    for (const f of ['splash_big', 'splash_small', 'sfx_bird_meadowlark_01', 'sfx_bird_meadowlark_02', 'sfx_owl_hoot_01', 'sfx_owl_hoot_02']) this.pending.push(this.load(f));
+  }
+
+  private pending: Promise<unknown>[] = [];
+  /** every sound file decoded */
+  async loaded() {
+    await Promise.all(this.pending);
   }
 
   private async load(name: string): Promise<AudioBuffer | null> {
@@ -221,10 +228,10 @@ export class AudioSystem {
   }
 
   /** a filtered noise burst: the synthesised parts of the horse */
-  private burst(dur: number, gain: number, f0: number, f1: number, q: number, attack = 0.004, pos?: THREE.Vector3) {
+  private burst(dur: number, gain: number, f0: number, f1: number, q: number, attack = 0.004, pos?: THREE.Vector3, delay = 0) {
     const ctx = this.ctx;
     if (!ctx || !this.noise || this.muted) return;
-    const t = ctx.currentTime;
+    const t = ctx.currentTime + delay;
     const src = ctx.createBufferSource();
     src.buffer = this.noise;
     const f = ctx.createBiquadFilter();
@@ -276,7 +283,7 @@ export class AudioSystem {
 
   snort() {
     this.burst(0.42, 0.18, 900, 380, 1.2, 0.03);
-    setTimeout(() => this.burst(0.25, 0.1, 700, 300, 1.4, 0.02), 450);
+    this.burst(0.25, 0.1, 700, 300, 1.4, 0.02, undefined, 0.45);
   }
 
   breath(gain: number) {
@@ -289,7 +296,7 @@ export class AudioSystem {
 
   /** the whistle-call answer and the like: a short soft nicker */
   nicker() {
-    for (let i = 0; i < 4; i++) setTimeout(() => this.burst(0.09, 0.08, 520, 420, 4, 0.01), i * 85);
+    for (let i = 0; i < 4; i++) this.burst(0.09, 0.08, 520, 420, 4, 0.01, undefined, i * 0.085);
   }
 
   // ---- round 19: the jump's voice and the standing horse's small sounds
@@ -297,7 +304,7 @@ export class AudioSystem {
   /** take-off: a sharp blown snort through the nostrils, and now and then a short whinny over it */
   jumpSnort(pos?: THREE.Vector3) {
     this.burst(0.16, 0.3, 1500, 520, 1.6, 0.008, pos);
-    setTimeout(() => this.burst(0.12, 0.16, 1150, 460, 1.8, 0.006, pos), 120 + Math.random() * 60);
+    this.burst(0.12, 0.16, 1150, 460, 1.8, 0.006, pos, (120 + Math.random() * 60) / 1000);
     if (Math.random() < 0.55) this.whinny(0.06 + Math.random() * 0.03, 0.06);
   }
 
@@ -362,7 +369,7 @@ export class AudioSystem {
     for (let i = 0; i < n; i++) {
       const f = 900 + Math.random() * 700;
       const d = 0.03 + Math.random() * 0.04, gg = gain * (0.6 + Math.random() * 0.6), q = 10 + Math.random() * 6;
-      setTimeout(() => this.burst(d, gg, f, f * (0.75 + Math.random() * 0.2), q, 0.004), at);
+      this.burst(d, gg, f, f * (0.75 + Math.random() * 0.2), q, 0.004, undefined, at / 1000);
       at += 25 + Math.random() * 60;
     }
   }
@@ -370,7 +377,7 @@ export class AudioSystem {
   /** standing: a soft snort, sometimes a second, smaller puff after it */
   softSnort(pos?: THREE.Vector3) {
     this.burst(0.3 + Math.random() * 0.15, 0.06 + Math.random() * 0.04, 750 + Math.random() * 200, 320, 1.3, 0.025, pos);
-    if (Math.random() < 0.4) setTimeout(() => this.burst(0.18, 0.04, 650, 300, 1.4, 0.02, pos), 380 + Math.random() * 120);
+    if (Math.random() < 0.4) this.burst(0.18, 0.04, 650, 300, 1.4, 0.02, pos, (380 + Math.random() * 120) / 1000);
   }
 
   state() {

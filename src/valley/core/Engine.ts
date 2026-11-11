@@ -2,6 +2,7 @@ import * as THREE from 'three/webgpu';
 import { mix, mrt, output, pass, renderOutput, screenUV, vec3, vec4, texture, uniform } from './tsl';
 import { smaa } from 'three/addons/tsl/display/SMAANode.js';
 import { bloom } from 'three/addons/tsl/display/BloomNode.js';
+import { dof } from 'three/addons/tsl/display/DepthOfFieldNode.js';
 import { params } from './params';
 import { Q, gpuName, preset } from './quality';
 import { grade, toneAndGrade } from './grade';
@@ -229,6 +230,13 @@ export class Engine {
    * so edges resolve in radiance; River Morning ends in SMAA. TRAA's history smeared the grass and leaves in motion,
    * and the 0.85 render scale was upscaled on top of it.)
    */
+  /**
+   * Capture only (the trailer): depth of field on the linear HDR image, before tone mapping, so highlights bloom into
+   * bokeh as through a lens. `focus` is the distance (m) along the view that stays sharp, `range` how far off it the
+   * picture goes fully soft, `bokeh` the blur size (0: no depth of field). Each shot sets them.
+   */
+  readonly lens = { focus: uniform(8), range: uniform(6), bokeh: uniform(0) };
+
   setupPost() {
     const { scene, camera, renderer } = this;
     const pipeline = new THREE.RenderPipeline(renderer);
@@ -248,7 +256,8 @@ export class Engine {
     // input is clamped so the sun gives a glare around it, not a blown-out third of the frame
     const lit = hdrClamped.mul(grade.exposure);
     const exposed = Q.bloom ? lit.add(bloom(vec4(lit.min(vec3(12)), 1), 0.55, 0.2, 2.6).rgb.mul(grade.bloomStrength.mul(16))) : lit;
-    const display = toneAndGrade(exposed);
+    const focused = params.capture ? vec4(dof(vec4(exposed, 1), scenePass.getViewZNode(), this.lens.focus, this.lens.range, this.lens.bokeh) as unknown as typeof exposed).rgb : exposed;
+    const display = toneAndGrade(focused);
     // SMAA on the display image (it reads edges in display luma): the alpha-tested leaf and blade edges MSAA cannot
     // reach inside a card. No sharpening (River Morning: CAS made the needles shimmer in motion).
     pipeline.outputNode = params.noAA ? display : smaa(display);

@@ -407,11 +407,17 @@ export function aerialFogNode() {
     const dir = vec3(v.x, max(v.y, 0.02), v.z).normalize();
     // (the moonlit night haze over the land glows with the night sky's own light, Sky.ts; the far sea keeps the dark
     // of the clear air out there, or the night sea turned the sky's colour)
-    const nearLand = smoothstep(2500, 700, length(positionView));
+    // (the valley: no sea, and the haze must pale with distance at every range. The near glow used to fade out past
+    // 0.7-2.5 km while the far air took a dimmer colour, so the rim's ridges came out darker than the hills in front of
+    // them, an upside-down range across the night sky. One colour of night air at every distance now)
+    const nearLand = float(1);
     // (moonlit: the damp air over the land glows paler than the dark crowns in it, so each ridge behind the next
     // steps back a shade; it is only this bright within a couple of kilometres, over the island)
     const moonHaze = float(1).sub(atmo.overcast).mul(smoothstep(-0.05, 0.3, atmo.moonDir.y));
-    const sky = skyRadiance(dir).add(vec3(0.0013, 0.0024, 0.0058).mul(atmo.night).mul(nearLand).mul(moonHaze.mul(1.6).add(1)));
+    // (its glow fades up the sky as the dome's does, Sky.ts: a slope standing 20 degrees up glowed against a darker sky)
+    const domeGlow = moonHaze.mul(smoothstep(0.4, 0.0, dir.y)).mul(1.6).add(1);
+    const skyDir = skyRadiance(dir);
+    const sky = skyDir.add(vec3(0.0013, 0.0024, 0.0058).mul(atmo.night).mul(nearLand).mul(domeGlow));
     // under an overcast the haze is the grey of the overcast sky's horizon (Sky.ts: about a fifth of the dome
     // overhead, scaled from the clear sky 15 degrees up in this direction)
     const lumRef = skyRadiance(normalize(vec3(v.x, 0.27, v.z))).dot(vec3(0.2126, 0.7152, 0.0722));
@@ -427,7 +433,12 @@ export function aerialFogNode() {
     // up, so the ranges read as dark blue-grey silhouettes a step darker than the sky behind them)
     // (the night LUT itself is near black there: the sky's visible night glow is the airglow term above, which stopped at
     // 2.5 km. The far air gets the same moonlit glow, a little dimmer, so a range is a shade darker than the sky)
-    const nightAir = vec3(0.0013, 0.0024, 0.0058).mul(moonHaze.mul(1.6).add(1)).mul(0.8).add(vec3(lumRef).mul(vec3(0.74, 0.9, 1.3)));
+    // (round 19: and never paler than that sky. The far air took the sky 15 degrees up plus 2.6 times the airglow, so the
+    // tall rim ranges, whose tops stand 15-25 degrees up against a dome of plain airglow, came out brighter than the sky
+    // behind them, and the dark sky above their peaks read as an upside-down range. The far air is now the night dome
+    // itself along the same ray (Sky.ts: the sky's light, the airglow and its moonlit glow low down), a shade darker, so a
+    // range is always a silhouette against the sky behind it and still steps back from the black ridges in front)
+    const nightAir = skyDir.add(vec3(0.0013, 0.0024, 0.0058).mul(domeGlow)).mul(0.8);
     air = mix(air, nightAir, atmo.night.mul(smoothstep(1200, 4500, length(positionView))));
     // (the green wall's share of the haze: its optical depth against the open air's, roughly)
     const d = length(positionView);

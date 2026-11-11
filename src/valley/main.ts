@@ -7,7 +7,7 @@ import * as THREE from 'three/webgpu';
 import { SunShadowNode, addSunOcclusion } from './sky/SunShadow';
 import { VEG_SHADOW_LAYER } from './veg/Vegetation';
 import { Engine, grade } from './core/Engine';
-import { params, TOD_PRESETS } from './core/params';
+import { params, TOD_PRESETS, TOD_PICKS } from './core/params';
 import { Q, preset, gpuName } from './core/quality';
 import { initAssets, progress as assetProgress } from './core/Assets';
 import { Heightfield } from './world/Heightfield';
@@ -147,6 +147,13 @@ async function boot() {
   };
   window.addEventListener('pointerdown', startAudio);
   window.addEventListener('keydown', startAudio);
+  // the hour the player picks (the buttons, T): carried there over a second or two, then held
+  const pickTime = (name: (typeof TOD_PICKS)[number]) => {
+    tod.goTo(TOD_PRESETS[name]);
+    game?.pickTime();
+    gameUI.timePick = name;
+  };
+  gameUI.onPickTime = pickTime;
   const rig = new CameraRig(camera, {
     groundAt: (x, z) => hf.height(x, z),
     raycast: (f, d, m) => colliders.raycast(f, d, m),
@@ -165,11 +172,12 @@ async function boot() {
   engine.addUpdater((dt, t) => {
     const intent0 = input.read(dt);
     const intent = game && rideOn ? game.update(dt, intent0, t) : intent0;
-    if (input.hit('KeyT')) tod.setHour(nextTod(tod.hour));
+    if (input.hit('KeyT')) pickTime(TOD_PICKS[(TOD_PICKS.indexOf((gameUI.timePick ?? 'sunset') as (typeof TOD_PICKS)[number]) + 1) % TOD_PICKS.length]);
     if (input.hit('KeyC') && ride.view !== 'photo') ride.setView(ride.view === 'first' ? 'cinematic' : 'first');
     if (input.hit('KeyP')) {
       if (ride.view === 'photo') { ride.setView(prevView); posed = false; } else { prevView = ride.view; ride.setView('photo'); rig.set('free'); }
     }
+    weather.night = tod.night;
     weather.update(dt);
     tod.overcast = weather.cover * 0.9;
     tod.update(dt);
@@ -213,6 +221,8 @@ async function boot() {
     camera.updateMatrixWorld();
     terrain.update(camera, Q.shadowFar);
     valley.update(camera, dt, t, tod.night, tod.hour);
+    cps.night = tod.night;
+    cps.view.copy(camera.position);
     audio.campPos.copy(valley.firePos);
     vegU.time.value = t;
     vegU.viewPos.value.setFromMatrixPosition(camera.matrixWorld);
@@ -221,7 +231,7 @@ async function boot() {
     birds.update(t, tod.night, camera.position);
     const wdir = wetness.windDir.value as THREE.Vector2;
     sky.setDrift(wdir.x, wdir.y, t, tod.hour);
-    sky.update(dt, scene);
+    sky.update(dt, scene, false, tod.sweeping);
     (sprayU.sun.value as THREE.Color).copy(sunLight.color).multiplyScalar(sunLight.intensity);
   });
 
@@ -248,20 +258,13 @@ async function boot() {
   await loading.done();
   engine.resetPacing();
   game = new Game({ ride, audio, tod, ui: gameUI, cps, driveTime: params.tod == null, spawn: { x: SPAWN.player[0], z: SPAWN.player[1], yaw: SPAWN.yaw + Math.PI }, fire: valley.firePos });
+  // (an hour from the URL shows pressed only if it is one of the four)
+  if (params.tod != null) gameUI.timePick = TOD_PICKS.find((n) => Math.abs(TOD_PRESETS[n] - params.tod!) < 0.05) ?? null;
   const w = window as unknown as Record<string, unknown>;
   w.__valley = { ready: true, engine, tod, rig, hf, valley, camera, THREE, scene, ride, audio, music, input, colliders, PATHS, SITES, ROUTE, game, cps, gameUI, setPosed: (v: boolean) => { posed = v; }, stats: () => engine.stats() };
   console.info('[valley] ready');
 }
 
-/** T steps round this ring from the entry nearest the current hour: sunrise, then straight to golden hour and on
- * through the sunset in short steps (the recording's hours), dusk, night, and noon before sunrise again */
-const CYCLE = [TOD_PRESETS.sunrise, 16.6, 17.0, TOD_PRESETS.sunset, TOD_PRESETS.dusk, 21.5, TOD_PRESETS.noon];
-function nextTod(h: number) {
-  const d = (a: number) => Math.abs(((a - h + 36) % 24) - 12);
-  let k = 0;
-  for (let i = 1; i < CYCLE.length; i++) if (d(CYCLE[i]) < d(CYCLE[k])) k = i;
-  return CYCLE[(k + 1) % CYCLE.length];
-}
 
 boot().catch((e) => {
   console.error(e);

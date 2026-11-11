@@ -1,12 +1,12 @@
 /**
  * The checkpoints: a pair of wooden lantern posts either side of the trail, the lanterns hanging from short arms over
- * the edge of the way. They glow warm and soft (an emissive glass and a faint halo, no light: a light would change
- * the scene's light set and rebuild every lit material). The next one ahead burns brightest and breathes a little;
- * riding through swells it, and after that it settles to a low, cozy glow.
+ * the edge of the way. They glow warm and soft (an emissive glass and a faint halo). After dark they light the trail
+ * for real: two point lights, always in the scene (adding or removing a light changes the light set and rebuilds every
+ * lit material), wait at the pair nearest the camera and come up with the night. The next one ahead burns brightest
+ * and breathes a little; riding through swells it, and after that it settles to a low, cozy glow.
  */
 import * as THREE from 'three/webgpu';
 import { float, length, mx_noise_float, smoothstep, uniform, uv, vec3, vec4 } from '../core/tsl';
-import { sunLit } from '../core/lighting';
 import { effectMRT } from '../core/fx';
 import type { Heightfield } from '../world/Heightfield';
 import type { Colliders } from '../world/Colliders';
@@ -20,10 +20,20 @@ export class Checkpoints {
   private state: CpState[] = [];
   private swell: number[] = [];
   private time = uniform(0);
+  /** at night the lantern glass and halo are held down: under the night's exposure they burned out to white */
+  private nightU = uniform(0);
+  /** the lanterns' world positions, two per checkpoint */
+  private lamps: THREE.Vector3[] = [];
+  /** the two lights that wait at the nearest pair */
+  readonly lights = [new THREE.PointLight(0xffa04a, 0, 16, 2), new THREE.PointLight(0xffa04a, 0, 16, 2)];
+  /** set per frame: 0 day .. 1 night, and where the camera is */
+  night = 0;
+  readonly view = new THREE.Vector3();
 
   constructor(private hf: Heightfield, colliders: Colliders, readonly points: V2[], route: V2[]) {
-    const wood = sunLit(new THREE.MeshStandardNodeMaterial({ color: 0x3b2a1c, roughness: 0.92 }));
-    const iron = sunLit(new THREE.MeshStandardNodeMaterial({ color: 0x1d1b19, roughness: 0.55, metalness: 0.4 }));
+    // (lit by every light, the lanterns' own too: at night the arm and the post under each lantern catch its glow)
+    const wood = new THREE.MeshStandardNodeMaterial({ color: 0x3b2a1c, roughness: 0.92 });
+    const iron = new THREE.MeshStandardNodeMaterial({ color: 0x1d1b19, roughness: 0.55, metalness: 0.4 });
     const postG = new THREE.CylinderGeometry(0.055, 0.07, 2.5, 7).translate(0, 1.25, 0);
     const armG = new THREE.BoxGeometry(0.05, 0.05, 0.55).translate(0, 0, 0.24);
     const capG = new THREE.ConeGeometry(0.11, 0.1, 6).translate(0, 0.17, 0);
@@ -38,11 +48,11 @@ export class Checkpoints {
       // (the flame inside flickers: two octaves of noise in time, per lantern)
       const fl = mx_noise_float(vec3(this.time.mul(2.3), float(i * 7.1), 0.5)).mul(0.12).add(mx_noise_float(vec3(this.time.mul(7.7), float(i * 3.3), 2.0)).mul(0.06)).add(0.9);
       const glass = new THREE.MeshBasicNodeMaterial();
-      glass.colorNode = vec4(vec3(3.2, 1.55, 0.5).mul(g).mul(fl), 1);
+      glass.colorNode = vec4(vec3(3.2, 1.55, 0.5).mul(g).mul(fl).mul(float(1).sub(this.nightU.mul(0.72))), 1);
       glass.fog = true;
       const halo = new THREE.SpriteNodeMaterial({ transparent: true, depthWrite: false, blending: THREE.AdditiveBlending });
       const r = length(uv().sub(0.5)).mul(2);
-      halo.colorNode = vec4(vec3(1.0, 0.52, 0.18).mul(float(1).sub(smoothstep(0, 1, r)).pow(2.4)).mul(g).mul(fl).mul(0.55), 1);
+      halo.colorNode = vec4(vec3(1.0, 0.5, 0.16).mul(float(1).sub(smoothstep(0, 1, r)).pow(2.4)).mul(g).mul(fl).mul(0.55).mul(float(1).sub(this.nightU.mul(0.6))), 1);
       halo.mrtNode = effectMRT();
       halo.fog = true;
       // the trail's direction here: the posts stand across it
@@ -67,12 +77,15 @@ export class Checkpoints {
         h.scale.setScalar(1.5);
         lantern.add(h);
         post.add(pole, arm, lantern);
+        post.updateMatrixWorld(true);
+        this.lamps.push(lantern.getWorldPosition(new THREE.Vector3()));
         post.traverse((o) => { if ((o as THREE.Mesh).isMesh) { o.castShadow = true; o.receiveShadow = true; } });
         h.castShadow = false;
         this.group.add(post);
         colliders.circle(px, pz, 0.2);
       }
     }
+    for (const l of this.lights) { l.castShadow = false; this.group.add(l); }
     this.reset();
   }
 
@@ -88,6 +101,21 @@ export class Checkpoints {
 
   update(dt: number, t: number) {
     this.time.value = t;
+    this.nightU.value = this.night;
+    // the lights: at the pair nearest the camera, up with the night, the glow and its flicker; faded out far off
+    let k = 0, best = Infinity;
+    for (let i = 0; i < this.points.length; i++) {
+      const d = Math.hypot(this.points[i][0] - this.view.x, this.points[i][1] - this.view.z);
+      if (d < best) { best = d; k = i; }
+    }
+    const far = 1 - THREE.MathUtils.smoothstep(best, 90, 140);
+    const g = this.glow[k].value as number;
+    for (let j = 0; j < 2; j++) {
+      const l = this.lights[j];
+      l.position.copy(this.lamps[k * 2 + j]).y -= 0.05;
+      const fl = 0.9 + 0.07 * Math.sin(t * 9.3 + j * 2.1) + 0.04 * Math.sin(t * 23.1 + j);
+      l.intensity = 26 * this.night * g * fl * far;
+    }
     for (let i = 0; i < this.glow.length; i++) {
       const s = this.state[i];
       // (the next one breathes slowly, so the eye finds it down the trail)
