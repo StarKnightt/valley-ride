@@ -7,11 +7,12 @@
  * so far (walk, trot and canter are Round 4): below gallop speed the same cycle plays at the slower phase rate, and
  * near a standstill it fades to the standing pose.
  *
- * The rider is still a placeholder (grey boxes on the horse's back) until Round 5.
+ * The rider (Rider.ts) sits in Horse.rider, pinned to the back bone; her clip plays at the same stride phase.
  */
 import * as THREE from 'three/webgpu';
 import { loadGLTF } from '../core/Assets';
 import { sunLit } from '../core/lighting';
+import { Rider } from './Rider';
 
 /** ground speeds (m/s) of the gaits; the stride (m) of one full gallop cycle comes with the model (horse.json) */
 export const GAIT = {
@@ -109,6 +110,8 @@ export class Horse {
   halfWidth = 0.3;
   heading = 0;
   readonly rider = new THREE.Group();
+  /** the rider herself (her model, clip and springs), inside rider */
+  readonly person = new Rider();
   /** turn rate (rad/s, + left), set by Ride */
   turnRate = 0;
   /** the jump (set by Ride): airborne, the body's drop (m) and extra pitch (+ nose down) */
@@ -191,19 +194,7 @@ export class Horse {
     pin(this.bitR, 'head', { x: -0.045, y: mz[1] + 0.04, z: mz[2] - 0.12 });
     pin(this.neckL, 'neck2', { x: 0.09, y: (w[1] + pl[1]) / 2, z: (w[2] + pl[2]) / 2 });
     pin(this.neckR, 'neck2', { x: -0.09, y: (w[1] + pl[1]) / 2, z: (w[2] + pl[2]) / 2 });
-    // PLACEHOLDER rider: a seated column of grey boxes on the back (Round 5 replaces it)
-    const grey = sunLit(new THREE.MeshStandardMaterial({ color: 0x8a8a8a, roughness: 0.85 }));
-    const dark = sunLit(new THREE.MeshStandardMaterial({ color: 0x5a5a5a, roughness: 0.85 }));
-    const box = (bw: number, bh: number, bd: number, m: THREE.Material, x: number, y: number, z: number) => {
-      const mesh = new THREE.Mesh(new THREE.BoxGeometry(bw, bh, bd), m);
-      mesh.position.set(x, y, z);
-      mesh.castShadow = mesh.receiveShadow = true;
-      this.rider.add(mesh);
-    };
-    box(0.42, 0.16, 0.45, dark, 0, 0.06, 0);
-    box(0.38, 0.6, 0.24, grey, 0, 0.45, -0.06);
-    box(0.2, 0.24, 0.22, grey, 0, 0.9, -0.04);
-    for (const s of [1, -1]) box(0.12, 0.6, 0.14, dark, s * 0.34, -0.25, 0.05);
+    // the rider's frame: on the back bone, at rest the model's own frame moved to the seat
     pin(this.rider, 'back', { x: 0, y: w[1] - 0.06, z: w[2] - 0.42 });
     this.rider.quaternion.copy(bone('back').getWorldQuaternion(this.q).invert());
 
@@ -237,6 +228,9 @@ export class Horse {
         this.hair.push({ bone: b, tail: new THREE.Vector3(0, len, 0), p: new THREE.Vector3(), v: new THREE.Vector3(), cfg, ready: false });
       }
     }
+    // the rider last: her rig sits inside the horse's model (on the back bone) and shares bone names with it (head,
+    // neck, chest), so the horse's clip has to be bound to its own bones before hers are in the tree
+    await this.person.load(this.rider, { x: 0, y: w[1] - 0.06, z: w[2] - 0.42 }, model, this.bones);
     this.halfLen = (mz[2] - meta.markers.buttock.at[2]) / 2 - 0.25;
     this.halfWidth = 0.3;
     this.pose(0, 0);
@@ -249,6 +243,7 @@ export class Horse {
     this.gallop.setEffectiveWeight(w);
     this.mixer.update(0);
     if (this.headNod && this.head) this.head.quaternion.multiply(this.q.setFromAxisAngle(this.v.set(1, 0, 0), this.headNod));
+    this.person.pose(phase, w);
     for (const m of this.morphs) {
       const n = m.table.length, x = wrap(phase) * n, i = Math.floor(x) % n, f = x - Math.floor(x);
       m.influences[m.slot] = (m.table[i] + (m.table[(i + 1) % n] - m.table[i]) * f) * w;
@@ -323,6 +318,7 @@ export class Horse {
     this.pose(this.phase, move);
     this.root.updateMatrixWorld(true);
     this.hairStep(dt);
+    this.person.step(dt, this.root, Math.min(1, this.speed / GAIT.gallop), this.hairStill);
     // footfalls: a toe coming down onto the ground (in the horse's own frame: the terrain's tilt is the body's)
     this.body.updateMatrixWorld(true);
     for (const leg of LEGS) {
@@ -347,6 +343,7 @@ export class Horse {
     this.pitch = this.roll = this.lift = this.jumpPitch = this.headNod = 0;
     this.air = false;
     for (const h of this.hair) h.ready = false;
+    this.person.step(0, this.root, 0, true);
     this.body.position.set(0, 0, 0);
     this.body.rotation.set(0, 0, 0);
     this.pose(0, THREE.MathUtils.smoothstep(this.speed, 0.05, 1.0));

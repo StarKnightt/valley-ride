@@ -12,7 +12,8 @@
     "test:rig": "node scripts/rig-check.mjs",
     "gallop:strip": "node scripts/gallop-strip.mjs",
     "design:gallop": "node --import tsx tools/gait/design-gallop.ts --kleg=16 --kswing=9 --pad=0.01 --broyden=6",
-    "build:horse": "tsx tools/build-horse.ts"
+    "build:horse": "tsx tools/build-horse.ts",
+    "build:rider": "tsx tools/build-rider.ts"
   },
   "dependencies": {
     "three": "^0.187.0"

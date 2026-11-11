@@ -5,8 +5,14 @@ procedural sky, terrain, river, grass and the pine and oak trees are our own wor
 AI-generated (GAME.md, Rules).
 
 The horse (`public/assets/horse/`: mesh, rig, textures and gallop) is our own work, built in Blender by the scripts
-in `tools/blender/horse/` and animated against Muybridge's plate (below). The rider, the ruins and the props are
-grey placeholders built in code until they are modelled in Blender. There is no music yet.
+in `tools/blender/horse/` and animated against Muybridge's plate (below). The ruins and the props are grey
+placeholders built in code until they are modelled in Blender. There is no music yet.
+
+The rider (`public/assets/rider/rider.glb`) is built in Blender by the scripts in `tools/blender/rider/`: her seat,
+clothes, hair, rig, ride, saddle, bridle and stirrups, and every texture (painted and baked by those scripts) are our
+own work. Her body's surface is the MakeHuman base mesh with its shape targets and skin weights, through the MPFB 2
+Blender extension - by the MakeHuman team and community, CC0 1.0 (http://www.makehumancommunity.org/, see below).
+The photographs she was matched against are in `refs/rider/` (credits in its README); none of them ship.
 
 All Poly Haven assets are CC0 1.0 (https://polyhaven.com/license), credited anyway. All freesound.org recordings
 listed here are CC0 1.0.
@@ -19,6 +25,12 @@ listed here are CC0 1.0.
 | Oak trees (oak_a, oak_b): geometry, leaf and bark atlases | `tools/blender/broadleaf/make_broadleaf.py` | `public/assets/trees/oak_*`, `textures/broadleaf_*` |
 | The valley: heightfield, material masks, shore distance | `tools/gen-valley.ts` | `public/world/*` |
 | Grass blade atlas | our earlier project Island (own work) | `public/assets/foliage/grass.ktx2` |
+
+## The rider's body (MakeHuman, CC0 1.0)
+
+| What | By | Licence | Used for |
+|---|---|---|---|
+| MakeHuman base mesh ("hm08"), macro and detail shape targets, "game engine" rig weights, as shipped in MPFB 2 | The MakeHuman team and community | CC0 1.0 | the shape and skin weights of the rider's body and the bodysuit layer her clothes are cut from (`tools/blender/rider/rider_body.py`) |
 
 ## Trees from River Morning (our earlier project)
 

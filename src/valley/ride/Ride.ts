@@ -73,11 +73,12 @@ export class Ride {
   camOff = false;
 
   constructor(private hf: Heightfield, private colliders: Colliders, private scene: THREE.Scene, private audio: AudioSystem | null, private valley: Valley | null) {
-    // reins: two leather straps from the bit to the hands, rebuilt each frame as a sagging square tube
-    const SEG = 18, SIDES = 4;
-    this.reinPos = new Float32Array(2 * (SEG + 1) * SIDES * 3);
+    // reins: leather straps rebuilt each frame - one from each bit ring back along the neck into her fist, and the
+    // bight (the spare loop that joins them) from fist to fist, hanging down the horse's off shoulder
+    const SEG = 18, SIDES = 4, STRAPS = 3;
+    this.reinPos = new Float32Array(STRAPS * (SEG + 1) * SIDES * 3);
     const idx: number[] = [];
-    for (let r = 0; r < 2; r++) for (let i = 0; i < SEG; i++) for (let s = 0; s < SIDES; s++) {
+    for (let r = 0; r < STRAPS; r++) for (let i = 0; i < SEG; i++) for (let s = 0; s < SIDES; s++) {
       const a = (r * (SEG + 1) + i) * SIDES, b = a + SIDES;
       const s1 = (s + 1) % SIDES;
       idx.push(a + s, b + s, a + s1, a + s1, b + s, b + s1);
@@ -87,7 +88,7 @@ export class Ride {
     g.setIndex(idx);
     // (round 16: thin dark leather straps. The mid brown read as orange bars in a low sun, so it is a dark worn
     // leather now, matte with only a little sheen)
-    const m = sunLit(new THREE.MeshStandardNodeMaterial({ color: 0x21150c, roughness: 0.62, side: THREE.DoubleSide }));
+    const m = sunLit(new THREE.MeshStandardNodeMaterial({ color: 0x3a2413, roughness: 0.6, side: THREE.DoubleSide }));
     this.reins = new THREE.Mesh(g, m);
     this.reins.frustumCulled = false;
     this.reins.castShadow = true;
@@ -562,6 +563,10 @@ export class Ride {
   }
 
   private hands = new THREE.Vector3();
+  private rt = new THREE.Vector3();
+  private rw = new THREE.Vector3();
+  private rk = new THREE.Vector3();
+  private rpv = new THREE.Vector3();
   private nk = new THREE.Vector3();
   private cp = new THREE.Vector3();
   private curve = new THREE.CatmullRomCurve3([new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3()], false, 'centripetal');
@@ -572,45 +577,59 @@ export class Ride {
     const h = this.horse;
     h.bitL.getWorldPosition(this.bl);
     h.bitR.getWorldPosition(this.br);
-    // the hands: over the horn, a little ahead of and below the eye, moving with the gait
-    // (from the rider's eye: a forearm ahead and a little more below, where hands on the reins are)
+    // (without her model's grips: a guess from the rider's eye, a forearm ahead and a little more below)
     h.eye.getWorldPosition(this.hands);
     const f = this.fwd(new THREE.Vector3());
     const left = new THREE.Vector3(f.z, 0, -f.x);
     this.hands.addScaledVector(f, 0.36).add(new THREE.Vector3(0, -0.42 + 0.012 * Math.sin(t * 2.1), 0));
-    const SEG = 18, SIDES = 4, R = 0.0032;
+    const gl = h.person.gripL ? h.person.gripL.getWorldPosition(new THREE.Vector3()) : this.hands.clone().addScaledVector(left, 0.07);
+    const gr = h.person.gripR ? h.person.gripR.getWorldPosition(new THREE.Vector3()) : this.hands.clone().addScaledVector(left, -0.07);
+    // a rein is a flat strap 21 mm wide and 4 mm thick (rubber-grip reins); seen from the side it shows its width
+    const SEG = 18, SIDES = 4, HW = 0.0105, HT = 0.002;
     const P = this.reinPos;
+    const tan = this.rt, wid = this.rw, thk = this.rk, prev = this.rpv;
     let o = 0;
-    for (let r = 0; r < 2; r++) {
-      const a = r === 0 ? this.bl : this.br;
-      const m = (r === 0 ? h.neckL : h.neckR).getWorldPosition(this.nk);
-      const b = this.hands.clone().addScaledVector(left, r === 0 ? 0.07 : -0.07);
-      // bit -> along the side of the neck -> the hand: a Catmull-Rom through the three, with a little slack
-      // between the neck and the hand (taken up at speed)
-      // (slack at the walk, taken up at speed; it swings a little with each stride)
-      const sag = Math.max(0.02, 0.09 - 0.006 * h.speed) * (1 + 0.25 * Math.sin(h.stridePhase * Math.PI * 4 + r));
-      // bit -> the guide high on the neck -> lying along the top of the mane -> the hand
-      this.curve.points[0].copy(a);
-      this.curve.points[1].copy(m);
-      this.curve.points[2].copy(m).lerp(b, 0.5).add(this.up.set(0, 0.06, 0));
-      this.curve.points[3].copy(b);
+    for (let r = 0; r < 3; r++) {
+      let sag = 0;
+      if (r < 2) {
+        // one line from the bit ring to her fist, bowed a finger's width out round the neck. Her hands go with the
+        // bit (the clip: tools/blender/rider/rider_rig.py), so the rein keeps its length: a light, steady contact
+        const a = r === 0 ? this.bl : this.br, b = r === 0 ? gl : gr;
+        sag = 0.006;
+        this.curve.points[0].copy(a);
+        this.curve.points[1].copy(a).lerp(b, 0.34).addScaledVector(left, r === 0 ? 0.022 : -0.022);
+        this.curve.points[2].copy(a).lerp(b, 0.68).addScaledVector(left, r === 0 ? 0.018 : -0.018);
+        this.curve.points[3].copy(b);
+        thk.copy(left);
+      } else {
+        // the bight: out of the top of each fist, over to the off side and down the shoulder, swinging with the stride
+        const sw = 0.02 * Math.sin(h.stridePhase * Math.PI * 4);
+        this.curve.points[0].copy(gl).add(this.up.set(0, 0.03, 0));
+        this.curve.points[1].copy(gl).lerp(gr, 0.5).add(this.up.set(0, 0.035, 0)).addScaledVector(f, 0.02);
+        this.curve.points[2].copy(gr).addScaledVector(left, -0.085).add(this.up.set(0, -0.15 + sw, 0)).addScaledVector(f, 0.05);
+        this.curve.points[3].copy(gr).add(this.up.set(0, 0.03, 0));
+        thk.copy(f);
+      }
       for (let i = 0; i <= SEG; i++) {
         const s = i / SEG;
         this.curve.getPoint(s, this.cp);
-        const u = Math.max(0, (s - 0.62) / 0.38);
-        const cx = this.cp.x, cy = this.cp.y - sag * 4 * u * (1 - u), cz = this.cp.z;
-        // a flat strap: wider across than thick
+        this.cp.y -= sag * 4 * s * (1 - s);
+        if (i === 0) { this.curve.getPoint(1 / SEG, prev); tan.copy(prev).sub(this.cp); } else tan.copy(this.cp).sub(prev);
+        prev.copy(this.cp);
+        tan.normalize();
+        wid.crossVectors(tan, r < 2 ? left : f).normalize();
+        thk.crossVectors(wid, tan).normalize();
         for (let k = 0; k < SIDES; k++) {
-          const ang = (k / SIDES) * Math.PI * 2 + Math.PI / 4;
-          const w = Math.cos(ang) * R * 1.7, hh = Math.sin(ang) * R * 0.45;
-          P[o++] = cx + left.x * w;
-          P[o++] = cy + hh;
-          P[o++] = cz + left.z * w;
+          const w = (k === 0 || k === 3 ? -1 : 1) * HW, hh = (k < 2 ? -1 : 1) * HT;
+          P[o++] = this.cp.x + wid.x * w + thk.x * hh;
+          P[o++] = this.cp.y + wid.y * w + thk.y * hh;
+          P[o++] = this.cp.z + wid.z * w + thk.z * hh;
         }
       }
     }
     const attr = this.reins.geometry.getAttribute('position') as THREE.BufferAttribute;
     attr.needsUpdate = true;
+    this.reins.geometry.computeVertexNormals();
     this.reins.geometry.computeBoundingSphere();
   }
 

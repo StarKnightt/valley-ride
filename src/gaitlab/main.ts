@@ -73,7 +73,6 @@ async function boot() {
   const horse = new Horse();
   await horse.load();
   scene.add(horse.root);
-  horse.rider.visible = false; // (the plate is compared with the horse; the placeholder rider would only hide its back)
   const plate: Plate = await (await fetch('refs/muybridge/keypoints.json')).json();
   const card = new Image();
   card.src = 'refs/muybridge/card.jpg';
